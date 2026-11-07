@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lions Vocab Teacher Dashboard</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Kalam:wght@400;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>html{color-scheme:light}body{margin:0}[hidden]{display:none!important}.wrap{max-width:1100px}</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Lions Storyline · Teacher view</div>
+      <h1>Vocab Dashboard</h1>
+    </div>
+    <div class="progress">
+      <div class="who" id="who"></div>
+      <a class="printlink" href="index.html">Open student site ↗</a>
+    </div>
+  </header>
+
+  <section class="panel gate" id="gate" aria-live="polite"><p class="muted">Loading…</p></section>
+
+  <div id="app" hidden>
+    <div id="demoBanner" class="demo-banner" hidden>Demo mode: these students and scores are made up so you can preview the dashboard.</div>
+    <div class="toolbar">
+      <div class="units" id="periods" style="margin:0" aria-label="Class period"></div>
+      <div class="row">
+        <button class="btn small" id="refresh">Refresh</button>
+        <button class="btn small" id="csv">Download CSV</button>
+      </div>
+    </div>
+    <nav class="modes" role="tablist" aria-label="Dashboard view">
+      <button role="tab" data-view="class">Class summary</button>
+      <button role="tab" data-view="students">Students</button>
+    </nav>
+    <main id="main"></main>
+  </div>
+
+  <footer>Accuracy counts quiz, match and fill-in answers. “Got it” marks are what students report about themselves on flashcards.</footer>
+</div>
+<script type="module" src="dashboard.js"></script>
+</body>
+</html>

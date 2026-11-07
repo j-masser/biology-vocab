@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lions Storyline Vocab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Kalam:wght@400;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>html{color-scheme:light}body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Biology · Lions Storyline</div>
+      <h1>Key Terms Review</h1>
+    </div>
+    <div class="progress">
+      <div class="who" id="who"></div>
+      <a class="printlink" href="https://docs.google.com/document/d/1UZq2VV1L9wvmPuFDq2-9GFkAlkarSOsqft8QgDiD_F4/edit?usp=sharing" target="_blank" rel="noopener">Printable word list ↗</a>
+      <span id="progText"></span>
+      <div class="bar"><i id="progBar"></i></div>
+    </div>
+  </header>
+
+  <section class="panel gate" id="gate" aria-live="polite"><p class="muted">Loading…</p></section>
+
+  <div id="app" hidden>
+    <nav class="modes" role="tablist" aria-label="Practice mode">
+      <button role="tab" data-mode="cards">Flashcards</button>
+      <button role="tab" data-mode="quiz">Quiz</button>
+      <button role="tab" data-mode="match">Match</button>
+      <button role="tab" data-mode="fill">Notes Fill-In</button>
+      <button role="tab" data-mode="list">Word List</button>
+    </nav>
+    <div class="units" id="units" aria-label="Choose a topic"></div>
+    <main class="panel" id="panel" aria-live="polite"></main>
+  </div>
+
+  <footer>Your progress and answers are saved to your school account so your teacher can see what to review.</footer>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

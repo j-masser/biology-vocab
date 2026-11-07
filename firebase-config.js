@@ -2,12 +2,12 @@
 // Firebase console → Project settings (gear icon) → General → Your apps → SDK setup and configuration → Config.
 // These values are not secret; the security rules in firestore.rules protect the data.
 export const firebaseConfig = {
-  apiKey: "PASTE_API_KEY_HERE",
-  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE_PROJECT_ID.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID"
+  apiKey: "AIzaSyBhfc9ev6epzebafW_Not4hERzSr44nL_o",
+  authDomain: "lionsvocab.firebaseapp.com",
+  projectId: "lionsvocab",
+  storageBucket: "lionsvocab.firebasestorage.app",
+  messagingSenderId: "313546129058",
+  appId: "1:313546129058:web:212e94f28974b1d7f7a1fb"
 };
 
 // Only Google accounts from this domain can sign in.

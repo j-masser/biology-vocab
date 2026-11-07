@@ -1,34 +1,50 @@
-// Vocabulary data shared by the student site and the teacher dashboard.
+// Biology Vocab: data shared by the student site and the teacher dashboard.
+// To add a new unit: add a review set to SETS (if needed), add its lessons to UNITS with that set id,
+// then add its terms to TERMS and fill-in sentences to NOTES using the lesson id in "u".
 // Each term has a stable id used as its key in Firestore. Do not change ids once students have data.
 
+// Review sets shown as their own buttons. Each lesson in UNITS belongs to one set.
+export const SETS = [
+ {"id": "lions1", "name": "Lions 1st half"},
+ {"id": "lions2", "name": "Lions 2nd half"}
+];
+
+// Lessons (shown as topic buttons).
 export const UNITS = [
  {
   "id": "group",
-  "name": "Group Behavior"
+  "name": "Group Behavior",
+  "set": "lions1"
  },
  {
   "id": "gen",
-  "name": "Genetics & Fitness"
+  "name": "Genetics & Fitness",
+  "set": "lions1"
  },
  {
   "id": "evo",
-  "name": "Phylogenetic Trees"
+  "name": "Phylogenetic Trees",
+  "set": "lions1"
  },
  {
   "id": "energy",
-  "name": "Energy & Diets"
+  "name": "Energy & Diets",
+  "set": "lions2"
  },
  {
   "id": "macro",
-  "name": "Macromolecules"
+  "name": "Macromolecules",
+  "set": "lions2"
  },
  {
   "id": "enz",
-  "name": "Enzymes"
+  "name": "Enzymes",
+  "set": "lions2"
  },
  {
   "id": "food",
-  "name": "Food Chains & Webs"
+  "name": "Food Chains & Webs",
+  "set": "lions2"
  }
 ];
 

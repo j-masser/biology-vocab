@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Lions Vocab Teacher Dashboard</title>
+<title>Biology Vocab Teacher Dashboard</title>
 <meta name="robots" content="noindex">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,7 +15,7 @@
 <div class="wrap">
   <header>
     <div>
-      <div class="eyebrow">Lions Storyline · Teacher view</div>
+      <div class="eyebrow">Biology Vocab · Teacher view</div>
       <h1>Vocab Dashboard</h1>
     </div>
     <div class="progress">
@@ -29,7 +29,10 @@
   <div id="app" hidden>
     <div id="demoBanner" class="demo-banner" hidden>Demo mode: these students and scores are made up so you can preview the dashboard.</div>
     <div class="toolbar">
-      <div class="units" id="periods" style="margin:0" aria-label="Class period"></div>
+      <div style="display:grid;gap:8px">
+        <div class="units" id="periods" style="margin:0" aria-label="Class period"></div>
+        <div class="units" id="scopes" style="margin:0" aria-label="Which terms"></div>
+      </div>
       <div class="row">
         <button class="btn small" id="refresh">Refresh</button>
         <button class="btn small" id="csv">Download CSV</button>

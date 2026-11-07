@@ -1,4 +1,4 @@
-import { UNITS, TERMS, NOTES } from "./data.js";
+import { SETS, UNITS, TERMS, NOTES } from "./data.js";
 import { loadFirebase, configured, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
@@ -14,12 +14,16 @@ const MIN_TERM = 2;          // a student needs this many answers on a term befo
 const MIN_CLASS_TERM = 3;    // class-wide answers needed before a term shows in the class lists
 const LOW = 0.6, HIGH = 0.8; // below 60% = struggling, 80%+ = strong
 
-let fb = null, students = [], period = "all", view = "class", selUid = null, sortBy = "period";
+let fb = null, students = [], period = "all", scope = "all", view = "class", selUid = null, sortBy = "period";
 
 /* ---------- math ---------- */
 const pct = (c, a) => a ? Math.round(c / a * 100) : null;
 const lvl = p => p == null ? "none" : p < LOW * 100 ? "bad" : p < HIGH * 100 ? "mid" : "good";
-const sumUnits = s => Object.values(s.units).reduce((t, u) => ({ a: t.a + (u.a || 0), c: t.c + (u.c || 0) }), { a: 0, c: 0 });
+const scopeUnits = () => UNITS.filter(u => scope === "all" || u.set === scope);
+const scopeTerms = () => { const ids = new Set(scopeUnits().map(u => u.id)); return TERMS.filter(t => ids.has(t.u)); };
+const scopeName = () => scope === "all" ? "all terms" : (SETS.find(x => x.id === scope) || {}).name;
+const sumUnits = s => scopeUnits().reduce((t, u) => { const x = s.units[u.id] || {}; return { a: t.a + (x.a || 0), c: t.c + (x.c || 0) }; }, { a: 0, c: 0 });
+const knownCount = s => { const ids = new Set(scopeTerms().map(t => t.id)); return s.known.filter(k => ids.has(k)).length; };
 function status(s) {
   const t = sumUnits(s);
   if (t.a < 5) return { cls: "none", label: "Not enough answers" };
@@ -28,10 +32,10 @@ function status(s) {
 }
 function weakestUnit(s) {
   let w = null;
-  for (const u of UNITS) { const x = s.units[u.id]; if (!x || (x.a || 0) < 3) continue; const p = pct(x.c || 0, x.a); if (!w || p < w.p) w = { id: u.id, p }; }
+  for (const u of scopeUnits()) { const x = s.units[u.id]; if (!x || (x.a || 0) < 3) continue; const p = pct(x.c || 0, x.a); if (!w || p < w.p) w = { id: u.id, p }; }
   return w;
 }
-const termRows = s => TERMS.map(t => { const x = s.stats[t.id] || {}; const a = x.a || 0, c = x.c || 0; return { t, a, c, p: pct(c, a) }; });
+const termRows = s => scopeTerms().map(t => { const x = s.stats[t.id] || {}; const a = x.a || 0, c = x.c || 0; return { t, a, c, p: pct(c, a) }; });
 const filtered = () => period === "all" ? students : students.filter(s => s.period === +period);
 const fmtDate = d => d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Never";
 const daysAgo = d => d ? (Date.now() - d.getTime()) / 864e5 : Infinity;
@@ -93,6 +97,7 @@ function startApp() {
   gate.hidden = true; $("#app").hidden = false;
   if (!wired) {
     wired = true;
+    $("#scopes").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (!b) return; scope = b.dataset.s; render(); });
     $("#periods").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (!b) return; period = b.dataset.p; selUid = null; render(); });
     document.querySelector("nav.modes").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (!b) return; view = b.dataset.view; selUid = null; render(); });
     $("#refresh").onclick = () => DEMO ? render() : load();
@@ -106,6 +111,8 @@ function render() {
   const counts = {}; students.forEach(s => counts[s.period] = (counts[s.period] || 0) + 1);
   $("#periods").innerHTML = [["all", `All periods (${students.length})`], ...[1, 2, 3, 4, 5, 6, 7].map(p => [String(p), `P${p} (${counts[p] || 0})`])]
     .map(([v, l]) => `<button class="chip" data-p="${v}" aria-pressed="${period === v}">${l}</button>`).join("");
+  $("#scopes").innerHTML = [["all", "All terms"], ...SETS.map(x => [x.id, x.name])]
+    .map(([v, l]) => `<button class="chip${v === "all" ? "" : " half"}" data-s="${v}" aria-pressed="${scope === v}">${esc(l)}</button>`).join("");
   document.querySelectorAll("nav.modes button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
   if (selUid) return renderStudent(students.find(s => s.uid === selUid));
   view === "class" ? renderClass() : renderStudents();
@@ -122,10 +129,10 @@ function renderClass() {
   if (!list.length) { main.innerHTML = `<div class="panel empty">No students ${period === "all" ? "have signed in yet" : "in Period " + period + " yet"}. They'll show up here after they sign in and pick their period.</div>`; return; }
   const tot = list.reduce((t, s) => { const u = sumUnits(s); return { a: t.a + u.a, c: t.c + u.c }; }, { a: 0, c: 0 });
   const active = list.filter(s => daysAgo(s.lastActive) <= 7).length;
-  const avgKnown = Math.round(list.reduce((t, s) => t + s.known.length, 0) / list.length);
+  const avgKnown = Math.round(list.reduce((t, s) => t + knownCount(s), 0) / list.length);
   const need = list.filter(s => status(s).cls === "bad").length;
 
-  const terms = TERMS.map(t => {
+  const terms = scopeTerms().map(t => {
     let a = 0, c = 0; const strug = [], gotItMissed = [];
     list.forEach(s => { const x = s.stats[t.id]; if (!x) return; a += x.a || 0; c += x.c || 0; if ((x.a || 0) >= MIN_TERM && (x.c || 0) / x.a < LOW) { strug.push(s); if (s.known.includes(t.id)) gotItMissed.push(s); } });
     return { t, a, c, p: pct(c, a), strug, gotItMissed };
@@ -142,14 +149,14 @@ function renderClass() {
       <div class="stat"><b>${list.length}</b><span>students signed up</span></div>
       <div class="stat"><b>${active}</b><span>practiced in the last 7 days</span></div>
       <div class="stat"><b>${pct(tot.c, tot.a) ?? "—"}${tot.a ? "%" : ""}</b><span>answers correct (${tot.a} answers)</span></div>
-      <div class="stat"><b>${avgKnown}<small style="font-size:16px">/${TERMS.length}</small></b><span>terms marked “Got it” (average)</span></div>
+      <div class="stat"><b>${avgKnown}<small style="font-size:16px">/${scopeTerms().length}</small></b><span>terms marked “Got it” (average)</span></div>
       <div class="stat"><b>${need}</b><span>students below 60%</span></div>
     </div>
 
     <div class="section">
       <h2>Accuracy by topic</h2>
-      <p class="sub">Quiz, match and fill-in answers for ${period === "all" ? "all periods" : "Period " + period}.</p>
-      <div class="bars">${UNITS.map(u => { let a = 0, c = 0; list.forEach(s => { const x = s.units[u.id]; if (x) { a += x.a || 0; c += x.c || 0; } }); return bar(u.name, c, a, "answers"); }).join("")}</div>
+      <p class="sub">Quiz, match and fill-in answers for ${period === "all" ? "all periods" : "Period " + period}, ${esc(scopeName())}.</p>
+      <div class="bars">${scopeUnits().map(u => { let a = 0, c = 0; list.forEach(s => { const x = s.units[u.id]; if (x) { a += x.a || 0; c += x.c || 0; } }); return bar(u.name, c, a, "answers"); }).join("")}</div>
     </div>
 
     <div class="section">
@@ -177,7 +184,7 @@ function renderClass() {
 
     <div class="section">
       <h2>Not practiced yet</h2>
-      <p class="sub">${untouched.length ? `${untouched.length} of ${TERMS.length} terms have no quiz or match answers from this group.` : "Every term has been practiced at least once."}</p>
+      <p class="sub">${untouched.length ? `${untouched.length} of ${scopeTerms().length} terms have no quiz or match answers from this group.` : "Every term has been practiced at least once."}</p>
       ${untouched.length ? `<div class="chiplist">${untouched.map(x => `<span>${esc(x.t.t)}</span>`).join("")}</div>` : ""}
     </div>`;
   wireRows();
@@ -201,7 +208,7 @@ function renderStudents() {
       </select></label>
     </div>
     ${list.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Last active</th><th>Got it</th><th>Correct</th><th>Answers</th><th>Weakest topic</th><th>Status</th></tr></thead><tbody>
-      ${list.map(({ s, t, st, w }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b><br><span class="muted small">${esc(s.email)}</span></td><td>${s.period}</td><td>${fmtDate(s.lastActive)}</td><td>${s.known.length}/${TERMS.length}</td><td>${t.a ? `${pct(t.c, t.a)}%` : "—"}</td><td>${t.a}</td><td>${w ? esc(unitName(w.id)) : "—"}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`).join("")}
+      ${list.map(({ s, t, st, w }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b><br><span class="muted small">${esc(s.email)}</span></td><td>${s.period}</td><td>${fmtDate(s.lastActive)}</td><td>${knownCount(s)}/${scopeTerms().length}</td><td>${t.a ? `${pct(t.c, t.a)}%` : "—"}</td><td>${t.a}</td><td>${w ? esc(unitName(w.id)) : "—"}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`).join("")}
     </tbody></table></div>` : `<div class="panel empty">No students here yet.</div>`}`;
   $("#sort").onchange = e => { sortBy = e.target.value; renderStudents(); };
   wireRows();
@@ -230,11 +237,11 @@ async function renderStudent(s) {
     <div class="tiles">
       <div class="stat"><b>${t.a ? pct(t.c, t.a) + "%" : "—"}</b><span>answers correct</span></div>
       <div class="stat"><b>${t.a}</b><span>quiz, match and fill-in answers</span></div>
-      <div class="stat"><b>${s.known.length}<small style="font-size:16px">/${TERMS.length}</small></b><span>terms marked “Got it”</span></div>
+      <div class="stat"><b>${knownCount(s)}<small style="font-size:16px">/${scopeTerms().length}</small></b><span>terms marked “Got it”</span></div>
       <div class="stat"><b style="font-size:18px;line-height:1.5">${fmtDate(s.lastActive)}</b><span>last active</span></div>
       <div class="stat"><b style="font-size:18px;line-height:1.5"><span class="pill ${st.cls}" style="font-size:15px">${st.label}</span></b><span>overall</span></div>
     </div>
-    <div class="section"><h2>Accuracy by topic</h2><div class="bars">${UNITS.map(u => { const x = s.units[u.id] || {}; return bar(u.name, x.c || 0, x.a || 0, "answers"); }).join("")}</div></div>
+    <div class="section"><h2>Accuracy by topic</h2><div class="bars">${scopeUnits().map(u => { const x = s.units[u.id] || {}; return bar(u.name, x.c || 0, x.a || 0, "answers"); }).join("")}</div></div>
     <div class="two">
       <div class="section"><h2>Struggling with</h2><p class="sub">Below 60% correct, at least ${MIN_TERM} answers.</p>
         ${strug.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Correct</th><th>Answers</th></tr></thead><tbody>${strug.map(r => `<tr><td><b>${esc(r.t.t)}</b> <span class="muted small">${esc(unitName(r.t.u))}</span>${s.known.includes(r.t.id) ? ` <span class="pill mid">said “Got it”</span>` : ""}</td><td><span class="pill bad">${r.p}%</span></td><td>${r.a}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">Nothing yet.</div>`}
@@ -244,7 +251,7 @@ async function renderStudent(s) {
         ${strong.length ? `<div class="chiplist">${strong.map(r => `<span>${esc(r.t.t)} · ${r.p}%</span>`).join("")}</div>` : `<div class="panel empty">Nothing yet.</div>`}
       </div>
     </div>
-    <div class="section"><h2>Not practiced yet</h2><p class="sub">${untouched.length} of ${TERMS.length} terms have no quiz or match answers.</p>
+    <div class="section"><h2>Not practiced yet</h2><p class="sub">${untouched.length} of ${scopeTerms().length} terms have no quiz or match answers.</p>
       ${untouched.length ? `<div class="chiplist">${untouched.map(r => `<span>${esc(r.t.t)}</span>`).join("")}</div>` : ""}</div>
     <div class="section"><h2>Recent answers</h2><div id="recent"><p class="muted">Loading…</p></div></div>`;
   $("#back").onclick = () => { selUid = null; render(); };
@@ -286,18 +293,18 @@ async function loadRecent(s) {
 /* ---------- CSV ---------- */
 function downloadCSV() {
   const list = filtered();
-  const head = ["Name", "Email", "Period", "Last active", "Got it (of " + TERMS.length + ")", "Answers", "Correct %", "Status", "Weakest topic", ...UNITS.map(u => u.name + " %"), "Struggling terms"];
+  const head = ["Name", "Email", "Period", "Last active", "Got it (of " + scopeTerms().length + ")", "Answers", "Correct %", "Status", "Weakest topic", ...scopeUnits().map(u => u.name + " %"), "Struggling terms"];
   const lines = [head];
   list.forEach(s => {
     const t = sumUnits(s), w = weakestUnit(s);
     const strug = termRows(s).filter(r => r.a >= MIN_TERM && r.p < LOW * 100).map(r => r.t.t).join("; ");
-    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", s.known.length, t.a, pct(t.c, t.a) ?? "", status(s).label, w ? unitName(w.id) : "",
-      ...UNITS.map(u => { const x = s.units[u.id]; return x ? pct(x.c || 0, x.a) ?? "" : ""; }), strug]);
+    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", knownCount(s), t.a, pct(t.c, t.a) ?? "", status(s).label, w ? unitName(w.id) : "",
+      ...scopeUnits().map(u => { const x = s.units[u.id]; return x ? pct(x.c || 0, x.a) ?? "" : ""; }), strug]);
   });
   const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" }));
-  a.download = `lions-vocab-${period === "all" ? "all-periods" : "period-" + period}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `biology-vocab-${scope === "all" ? "all-terms" : scope}-${period === "all" ? "all-periods" : "period-" + period}-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
 }
 

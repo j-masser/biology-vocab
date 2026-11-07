@@ -1,4 +1,4 @@
-import { UNITS, TERMS, NOTES } from "./data.js";
+import { SETS, UNITS, TERMS, NOTES } from "./data.js";
 import { loadFirebase, configured, isSchoolEmail, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 /* ---------- helpers ---------- */
@@ -18,7 +18,10 @@ let fb = null, uref = null, profile = null;
 let known = new Set();
 let unit = store.get("lv-unit", "all");
 let mode = "cards";
-const pool = () => unit === "all" ? TERMS : TERMS.filter(x => x.u === unit);
+const setOf = u => (UNITS.find(x => x.id === u) || {}).set;
+const setName = id => (SETS.find(s => s.id === id) || {}).name || "";
+const inSel = u => unit === "all" || unit === u || setOf(u) === unit;
+const pool = () => TERMS.filter(x => inSel(x.u));
 
 /* ---------- gate screens ---------- */
 function showGate(html) { gate.innerHTML = html; gate.hidden = false; $("#app").hidden = true; $("#progText").textContent = ""; $("#progBar").style.width = "0"; }
@@ -160,8 +163,10 @@ function updateProgress() {
   $("#progBar").style.width = (p.length ? k / p.length * 100 : 0) + "%";
 }
 function renderUnits() {
-  const all = [{ id: "all", name: "All topics" }, ...UNITS];
-  $("#units").innerHTML = all.map(u => `<button class="chip" data-unit="${u.id}" aria-pressed="${u.id === unit}">${u.name}</button>`).join("");
+  if (!["all", ...SETS.map(s => s.id), ...UNITS.map(u => u.id)].includes(unit)) unit = "all";
+  const chip = (id, name, cls = "") => `<button class="chip ${cls}" data-unit="${id}" aria-pressed="${id === unit}">${name}</button>`;
+  $("#units").innerHTML = chip("all", "All terms") + SETS.map(s => chip(s.id, s.name, "half")).join("")
+    + `<span class="chipsep" aria-hidden="true"></span>` + UNITS.map(u => chip(u.id, u.name)).join("");
 }
 $("#units").addEventListener("click", e => {
   const b = e.target.closest("[data-unit]"); if (!b) return;
@@ -302,7 +307,7 @@ function drawMatch() {
 /* ---------- Notes fill-in ---------- */
 let fl;
 function Fill() {
-  const p = unit === "all" ? NOTES : NOTES.filter(x => x.u === unit);
+  const p = NOTES.filter(x => inSel(x.u));
   if (!p.length) { panel.innerHTML = `<p>There are no fill-in sentences from the notes for this topic.</p><p><a class="btn" href="#cards">Use flashcards instead</a></p>`; return; }
   fl = { list: shuffle(p), i: 0, bank: false, right: 0 };
   drawFill();
@@ -356,7 +361,7 @@ function List() {
 function drawList() {
   const qq = q.trim().toLowerCase();
   const items = pool().filter(x => !qq || x.t.toLowerCase().includes(qq) || x.d.toLowerCase().includes(qq));
-  $("#lst").innerHTML = items.length ? items.map(x => `<div class="entry"><h3>${esc(x.t)}</h3><div class="d"><p>${esc(x.d)}</p>${x.ex ? `<p class="ex">e.g. ${esc(x.ex)}</p>` : ""}<p style="margin-top:4px"><span class="tag">${unitName(x.u)}</span></p></div><button class="star ${known.has(x.id) ? "on" : ""}" data-id="${x.id}" aria-pressed="${known.has(x.id)}">${known.has(x.id) ? "✓ Got it" : "Mark got it"}</button></div>`).join("") : `<p class="muted">No terms match “${esc(q)}”.</p>`;
+  $("#lst").innerHTML = items.length ? items.map(x => `<div class="entry"><h3>${esc(x.t)}</h3><div class="d"><p>${esc(x.d)}</p>${x.ex ? `<p class="ex">e.g. ${esc(x.ex)}</p>` : ""}<p style="margin-top:4px"><span class="tag halftag">${esc(setName(setOf(x.u)))}</span> <span class="tag">${unitName(x.u)}</span></p></div><button class="star ${known.has(x.id) ? "on" : ""}" data-id="${x.id}" aria-pressed="${known.has(x.id)}">${known.has(x.id) ? "✓ Got it" : "Mark got it"}</button></div>`).join("") : `<p class="muted">No terms match “${esc(q)}”.</p>`;
   $("#lst").querySelectorAll(".star").forEach(b => b.onclick = () => { const t = TERMS.find(x => x.id === b.dataset.id); setKnown(t, !known.has(t.id)); drawList(); });
 }
 

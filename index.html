@@ -20,19 +20,18 @@
     <div class="progress">
       <div class="who" id="who"></div>
       <a class="printlink" href="https://docs.google.com/document/d/1UZq2VV1L9wvmPuFDq2-9GFkAlkarSOsqft8QgDiD_F4/edit?usp=sharing" target="_blank" rel="noopener">Printable word list ↗</a>
-      <span id="progText"></span>
-      <div class="bar"><i id="progBar"></i></div>
+      <div class="meters" id="meters"></div>
     </div>
   </header>
 
   <section class="panel gate" id="gate" aria-live="polite"><p class="muted">Loading…</p></section>
 
   <div id="app" hidden>
-    <nav class="modes" role="tablist" aria-label="Practice mode">
-      <button role="tab" data-mode="cards">Flashcards</button>
-      <button role="tab" data-mode="quiz">Quiz</button>
-      <button role="tab" data-mode="match">Match</button>
-      <button role="tab" data-mode="fill">Notes Fill-In</button>
+    <nav class="modes" role="tablist" aria-label="Study path">
+      <button role="tab" data-mode="cards"><span class="num">1</span>Flashcards</button>
+      <button role="tab" data-mode="recog"><span class="num">2</span>Recognition</button>
+      <button role="tab" data-mode="recall"><span class="num">3</span>Recall</button>
+      <span class="navsep" aria-hidden="true"></span>
       <button role="tab" data-mode="list">Word List</button>
     </nav>
     <div class="units" id="units" aria-label="Choose a topic"></div>

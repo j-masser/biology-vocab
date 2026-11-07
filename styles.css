@@ -184,3 +184,40 @@ select.sel{font:600 14px var(--body);padding:8px 10px;border-radius:10px;border:
 .chip.half[aria-pressed="true"]{border-color:var(--band)}
 .chipsep{width:2px;background:var(--line);border-radius:2px;align-self:stretch;margin:2px 4px}
 .tag.halftag{background:var(--band);color:var(--on-band)}
+
+/* Study path: step tabs, step header, progress meters */
+nav.modes button .num{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line);color:var(--ink);font-size:12px;font-weight:800;margin-right:7px;vertical-align:1px}
+nav.modes button[aria-selected="true"] .num{background:var(--gold);color:#1A196E}
+.navsep{flex:1 1 12px;min-width:12px}
+.stephead{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-start;justify-content:space-between;padding-bottom:14px;margin-bottom:16px;border-bottom:2px dashed var(--line)}
+.stephead > div{min-width:0;flex:1 1 320px}
+.stepnum{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--pen)}
+.stephead h2{font-family:var(--display);font-weight:800;font-size:clamp(24px,5vw,30px);line-height:1.1;margin:2px 0 6px}
+.stephead p{margin:0;color:var(--muted);max-width:62ch}
+.nextstep{background:var(--gold);border-color:var(--gold);color:#1A196E;white-space:nowrap;text-decoration:none}
+.seg{display:inline-flex;border:2px solid var(--band);border-radius:10px;overflow:hidden;margin-bottom:16px}
+.seg button{font:700 15px var(--body);padding:9px 20px;background:var(--surface);color:var(--ink);border:0;cursor:pointer}
+.seg button + button{border-left:2px solid var(--band)}
+.seg button[aria-pressed="true"]{background:var(--band);color:var(--on-band)}
+.meters{display:grid;gap:6px;min-width:250px;margin-top:6px}
+.meter{display:grid;grid-template-columns:6.2rem minmax(60px,1fr) 3.6rem;gap:8px;align-items:center;font-size:13px;text-align:left}
+.meter b{text-align:right;font-variant-numeric:tabular-nums}
+.mbar{height:8px;background:rgba(255,255,255,.22);border-radius:99px;overflow:hidden}
+.mbar i{display:block;height:100%;border-radius:99px}
+.mbar .m1{background:#A6C532} .mbar .m2{background:var(--gold)} .mbar .m3{background:#3DD9C1}
+.tag.rectag{background:var(--gold-soft);color:var(--ink)}
+@media (max-width:640px){header .progress{width:100%;text-align:left}.meters{min-width:0}}
+
+/* Dashboard: study path cards and the two-column topic table */
+.path{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.pathcard{background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:16px 18px;position:relative}
+.pathcard h3{font-family:var(--display);font-weight:800;font-size:20px;margin:2px 0 8px}
+.pathcard p{margin:10px 0 0;font-size:13px;color:var(--muted)}
+.pathcard p b{color:var(--ink)}
+.pc-big b{font:800 34px/1 var(--display);font-variant-numeric:tabular-nums}
+.pc-big span{font-size:14px;color:var(--muted)}
+.mbar.dark{background:var(--line);height:10px;margin-top:10px}
+table.topics td{vertical-align:middle}
+.tcell{display:grid;grid-template-columns:minmax(80px,1fr) 6.5rem;gap:10px;align-items:center}
+.tcell span{font-size:13px;color:var(--muted);white-space:nowrap}
+.tcell span b{color:var(--ink)}

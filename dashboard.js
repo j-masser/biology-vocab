@@ -1,4 +1,7 @@
+// Biology Vocab teacher dashboard. Tracks the three study-path steps separately:
+// Flashcards (self-reported "Got it"), Recognition (quiz + match) and Recall (notes fill-in).
 import { SETS, UNITS, TERMS, NOTES } from "./data.js";
+import { RECOG_GOAL, RECALL_GOAL } from "./core.js";
 import { loadFirebase, configured, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
@@ -6,37 +9,54 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const unitName = id => (UNITS.find(u => u.id === id) || {}).name || id;
 const TERM = Object.fromEntries(TERMS.map(t => [t.id, t]));
 const NOTE = Object.fromEntries(NOTES.map(n => [n.id, n]));
+const blanked = n => n.s.replace(/\[([^\]]+)\]/g, "___");
 const gate = $("#gate"), main = $("#main");
 const DEMO = new URLSearchParams(location.search).has("demo");
 
-// Thresholds used everywhere on the page
-const MIN_TERM = 2;          // a student needs this many answers on a term before we judge it
-const MIN_CLASS_TERM = 3;    // class-wide answers needed before a term shows in the class lists
-const LOW = 0.6, HIGH = 0.8; // below 60% = struggling, 80%+ = strong
+// Thresholds
+const MIN_ITEM = 2;          // a student's answers on one term before we judge it
+const MIN_CLASS_ITEM = 3;    // class-wide answers before a term or sentence shows in class lists
+const MIN_STAGE = 5;         // answers in a step before a student gets a status for it
+const LOW = 60, HIGH = 80;   // percent: below 60 = needs support, 80+ = strong
 
 let fb = null, students = [], period = "all", scope = "all", view = "class", selUid = null, sortBy = "period";
 
-/* ---------- math ---------- */
-const pct = (c, a) => a ? Math.round(c / a * 100) : null;
-const lvl = p => p == null ? "none" : p < LOW * 100 ? "bad" : p < HIGH * 100 ? "mid" : "good";
+/* ---------- scope + per-student numbers ---------- */
 const scopeUnits = () => UNITS.filter(u => scope === "all" || u.set === scope);
-const scopeTerms = () => { const ids = new Set(scopeUnits().map(u => u.id)); return TERMS.filter(t => ids.has(t.u)); };
+const scopeIds = () => new Set(scopeUnits().map(u => u.id));
+const scopeTerms = () => { const ids = scopeIds(); return TERMS.filter(t => ids.has(t.u)); };
+const scopeNotes = () => { const ids = scopeIds(); return NOTES.filter(n => ids.has(n.u)); };
 const scopeName = () => scope === "all" ? "all terms" : (SETS.find(x => x.id === scope) || {}).name;
-const sumUnits = s => scopeUnits().reduce((t, u) => { const x = s.units[u.id] || {}; return { a: t.a + (x.a || 0), c: t.c + (x.c || 0) }; }, { a: 0, c: 0 });
-const knownCount = s => { const ids = new Set(scopeTerms().map(t => t.id)); return s.known.filter(k => ids.has(k)).length; };
-function status(s) {
-  const t = sumUnits(s);
-  if (t.a < 5) return { cls: "none", label: "Not enough answers" };
-  const p = pct(t.c, t.a);
-  return p < LOW * 100 ? { cls: "bad", label: "Needs support" } : p < HIGH * 100 ? { cls: "mid", label: "Developing" } : { cls: "good", label: "Strong" };
+const filtered = () => period === "all" ? students : students.filter(s => s.period === +period);
+
+const pct = (c, a) => a ? Math.round(c / a * 100) : null;
+const lvl = p => p == null ? "none" : p < LOW ? "bad" : p < HIGH ? "mid" : "good";
+const sumOver = (map) => scopeUnits().reduce((t, u) => { const x = map[u.id] || {}; return { a: t.a + (x.a || 0), c: t.c + (x.c || 0) }; }, { a: 0, c: 0 });
+
+function metrics(s) {
+  const terms = scopeTerms(), notes = scopeNotes();
+  const rec = sumOver(s.recogUnits), rcl = sumOver(s.recallUnits);
+  return {
+    got: terms.filter(t => s.known.includes(t.id)).length,
+    recognized: terms.filter(t => (s.stats[t.id]?.s || 0) >= RECOG_GOAL).length,
+    recalled: notes.filter(n => (s.recall[n.id]?.s || 0) >= RECALL_GOAL).length,
+    rec, rcl, recP: pct(rec.c, rec.a), rclP: pct(rcl.c, rcl.a),
+    nTerms: terms.length, nNotes: notes.length
+  };
 }
+function stagePill(p, a) {
+  if (a < MIN_STAGE) return `<span class="pill none">${a ? p + "%" : "—"}</span>`;
+  return `<span class="pill ${lvl(p)}">${p}%</span>`;
+}
+const needsSupport = m => (m.rec.a >= MIN_STAGE && m.recP < LOW) || (m.rcl.a >= MIN_STAGE && m.rclP < LOW);
 function weakestUnit(s) {
   let w = null;
-  for (const u of scopeUnits()) { const x = s.units[u.id]; if (!x || (x.a || 0) < 3) continue; const p = pct(x.c || 0, x.a); if (!w || p < w.p) w = { id: u.id, p }; }
+  for (const u of scopeUnits()) {
+    const a = (s.recogUnits[u.id]?.a || 0) + (s.recallUnits[u.id]?.a || 0), c = (s.recogUnits[u.id]?.c || 0) + (s.recallUnits[u.id]?.c || 0);
+    if (a < 3) continue; const p = pct(c, a); if (!w || p < w.p) w = { id: u.id, p };
+  }
   return w;
 }
-const termRows = s => scopeTerms().map(t => { const x = s.stats[t.id] || {}; const a = x.a || 0, c = x.c || 0; return { t, a, c, p: pct(c, a) }; });
-const filtered = () => period === "all" ? students : students.filter(s => s.period === +period);
 const fmtDate = d => d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Never";
 const daysAgo = d => d ? (Date.now() - d.getTime()) / 864e5 : Infinity;
 
@@ -44,7 +64,8 @@ function norm(d) {
   return {
     uid: d.uid, name: d.name || d.email || "Unknown", email: d.email || "", period: d.period,
     lastActive: d.lastActive && d.lastActive.toDate ? d.lastActive.toDate() : (d.lastActive instanceof Date ? d.lastActive : null),
-    known: d.known || [], stats: d.stats || {}, units: d.units || {}, counts: d.counts || {}
+    known: d.known || [], stats: d.stats || {}, recall: d.recall || {},
+    recogUnits: d.recogUnits || {}, recallUnits: d.recallUnits || {}
   };
 }
 
@@ -97,8 +118,8 @@ function startApp() {
   gate.hidden = true; $("#app").hidden = false;
   if (!wired) {
     wired = true;
-    $("#scopes").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (!b) return; scope = b.dataset.s; render(); });
     $("#periods").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (!b) return; period = b.dataset.p; selUid = null; render(); });
+    $("#scopes").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (!b) return; scope = b.dataset.s; render(); });
     document.querySelector("nav.modes").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (!b) return; view = b.dataset.view; selUid = null; render(); });
     $("#refresh").onclick = () => DEMO ? render() : load();
     $("#csv").onclick = downloadCSV;
@@ -118,98 +139,117 @@ function render() {
   view === "class" ? renderClass() : renderStudents();
 }
 
-function bar(label, c, a, extra = "") {
-  const p = pct(c, a);
-  return `<div class="barrow"><span class="lbl">${esc(label)}</span><div class="track" role="img" aria-label="${esc(label)}: ${p == null ? "no answers" : p + "% correct"}"><i class="lv-${lvl(p)}" style="width:${p ?? 0}%"></i></div>
-    <span class="val">${p == null ? "No answers yet" : `<b>${p}%</b> of ${a} ${extra}`}</span></div>`;
+const track = (p, label) => `<div class="track" role="img" aria-label="${esc(label)}: ${p == null ? "no answers" : p + "%"}"><i class="lv-${lvl(p)}" style="width:${p ?? 0}%"></i></div>`;
+function pathCards(got, nT, recog, rcl, nN, rec, rclAcc, avg) {
+  const card = (n, name, what, count, total, cls, acc) => `<div class="pathcard">
+      <span class="stepnum">Step ${n}</span><h3>${name}</h3>
+      <div class="pc-big"><b>${count}</b><span>/${total} ${what}${avg ? " (average)" : ""}</span></div>
+      <div class="mbar dark"><i class="${cls}" style="width:${total ? Math.min(100, count / total * 100) : 0}%"></i></div>
+      <p>${acc}</p></div>`;
+  return `<div class="path">
+    ${card(1, "Flashcards", "marked “Got it”", got, nT, "m1", "Self-check. Students decide this themselves.")}
+    ${card(2, "Recognition", "terms recognized", recog, nT, "m2", rec.a ? `<b>${pct(rec.c, rec.a)}%</b> correct on ${rec.a} quiz and match answers` : "No quiz or match answers yet")}
+    ${card(3, "Recall", "sentences recalled", rcl, nN, "m3", rclAcc.a ? `<b>${pct(rclAcc.c, rclAcc.a)}%</b> correct on ${rclAcc.a} fill-in sentences` : "No fill-in answers yet")}
+  </div>`;
+}
+function topicTable(getRec, getRcl) {
+  return `<div class="tablewrap"><table class="data topics"><thead><tr><th>Topic</th><th>Recognition (quiz + match)</th><th>Recall (fill-in)</th></tr></thead><tbody>
+    ${scopeUnits().map(u => { const r = getRec(u.id), c = getRcl(u.id), rp = pct(r.c, r.a), cp = pct(c.c, c.a);
+      return `<tr><td><b>${esc(u.name)}</b></td>
+        <td><div class="tcell">${track(rp, u.name + " recognition")}<span>${rp == null ? "—" : `<b>${rp}%</b> of ${r.a}`}</span></div></td>
+        <td><div class="tcell">${track(cp, u.name + " recall")}<span>${cp == null ? "—" : `<b>${cp}%</b> of ${c.a}`}</span></div></td></tr>`; }).join("")}
+  </tbody></table></div>`;
 }
 
 function renderClass() {
   const list = filtered();
   if (!list.length) { main.innerHTML = `<div class="panel empty">No students ${period === "all" ? "have signed in yet" : "in Period " + period + " yet"}. They'll show up here after they sign in and pick their period.</div>`; return; }
-  const tot = list.reduce((t, s) => { const u = sumUnits(s); return { a: t.a + u.a, c: t.c + u.c }; }, { a: 0, c: 0 });
+  const ms = list.map(s => ({ s, m: metrics(s) }));
+  const avg = k => Math.round(ms.reduce((t, x) => t + x.m[k], 0) / ms.length);
+  const sum = k => ms.reduce((t, x) => ({ a: t.a + x.m[k].a, c: t.c + x.m[k].c }), { a: 0, c: 0 });
   const active = list.filter(s => daysAgo(s.lastActive) <= 7).length;
-  const avgKnown = Math.round(list.reduce((t, s) => t + knownCount(s), 0) / list.length);
-  const need = list.filter(s => status(s).cls === "bad").length;
+  const T = scopeTerms(), N = scopeNotes();
+  const short = s => esc(s.name.split(" ")[0] + " " + (s.name.split(" ")[1] || "").charAt(0));
+  const names = arr => arr.length ? arr.slice(0, 3).map(short).join(", ") + (arr.length > 3 ? ` +${arr.length - 3}` : "") : "—";
 
-  const terms = scopeTerms().map(t => {
-    let a = 0, c = 0; const strug = [], gotItMissed = [];
-    list.forEach(s => { const x = s.stats[t.id]; if (!x) return; a += x.a || 0; c += x.c || 0; if ((x.a || 0) >= MIN_TERM && (x.c || 0) / x.a < LOW) { strug.push(s); if (s.known.includes(t.id)) gotItMissed.push(s); } });
-    return { t, a, c, p: pct(c, a), strug, gotItMissed };
+  const terms = T.map(t => {
+    let a = 0, c = 0; const strug = [], gotMiss = [];
+    list.forEach(s => { const x = s.stats[t.id]; if (!x) return; a += x.a || 0; c += x.c || 0; if ((x.a || 0) >= MIN_ITEM && (x.c || 0) / x.a < LOW / 100) { strug.push(s); if (s.known.includes(t.id)) gotMiss.push(s); } });
+    return { t, a, c, p: pct(c, a), strug, gotMiss };
   });
-  const rated = terms.filter(x => x.a >= MIN_CLASS_TERM);
-  const hard = [...rated].sort((x, y) => x.p - y.p || y.a - x.a).filter(x => x.p < HIGH * 100).slice(0, 12);
-  const easy = [...rated].sort((x, y) => y.p - x.p || y.a - x.a).filter(x => x.p >= HIGH * 100).slice(0, 10);
+  const rated = terms.filter(x => x.a >= MIN_CLASS_ITEM);
+  const hard = [...rated].filter(x => x.p < HIGH).sort((x, y) => x.p - y.p || y.a - x.a).slice(0, 12);
+  const easy = [...rated].filter(x => x.p >= HIGH).sort((x, y) => y.p - x.p || y.a - x.a).slice(0, 10);
   const untouched = terms.filter(x => x.a === 0);
-  const names = arr => arr.length ? arr.slice(0, 3).map(s => esc(s.name.split(" ")[0] + " " + (s.name.split(" ")[1] || "").charAt(0))).join(", ") + (arr.length > 3 ? ` +${arr.length - 3}` : "") : "—";
-  const needList = list.filter(s => status(s).cls === "bad").sort((a, b) => pct(sumUnits(a).c, sumUnits(a).a) - pct(sumUnits(b).c, sumUnits(b).a));
+  const sentences = N.map(n => {
+    let a = 0, c = 0; const strug = [];
+    list.forEach(s => { const x = s.recall[n.id]; if (!x) return; a += x.a || 0; c += x.c || 0; if ((x.a || 0) >= 1 && (x.s || 0) < RECALL_GOAL) strug.push(s); });
+    return { n, a, c, p: pct(c, a), strug };
+  }).filter(x => x.a >= MIN_CLASS_ITEM && x.p < HIGH).sort((x, y) => x.p - y.p || y.a - x.a).slice(0, 10);
+  const needList = ms.filter(x => needsSupport(x.m)).sort((a, b) => Math.min(a.m.recP ?? 101, a.m.rclP ?? 101) - Math.min(b.m.recP ?? 101, b.m.rclP ?? 101));
+  const unitSum = key => id => list.reduce((t, s) => { const x = s[key][id] || {}; return { a: t.a + (x.a || 0), c: t.c + (x.c || 0) }; }, { a: 0, c: 0 });
 
   main.innerHTML = `
-    <div class="tiles">
-      <div class="stat"><b>${list.length}</b><span>students signed up</span></div>
-      <div class="stat"><b>${active}</b><span>practiced in the last 7 days</span></div>
-      <div class="stat"><b>${pct(tot.c, tot.a) ?? "—"}${tot.a ? "%" : ""}</b><span>answers correct (${tot.a} answers)</span></div>
-      <div class="stat"><b>${avgKnown}<small style="font-size:16px">/${scopeTerms().length}</small></b><span>terms marked “Got it” (average)</span></div>
-      <div class="stat"><b>${need}</b><span>students below 60%</span></div>
-    </div>
+    <div class="row small muted" style="gap:18px;margin-bottom:12px"><span><b style="color:var(--ink)">${list.length}</b> students signed up</span><span><b style="color:var(--ink)">${active}</b> practiced in the last 7 days</span><span>Showing ${esc(scopeName())}</span></div>
+    ${pathCards(avg("got"), T.length, avg("recognized"), avg("recalled"), N.length, sum("rec"), sum("rcl"), true)}
+
+    <div class="section"><h2>Accuracy by topic</h2><p class="sub">Recognition is choosing the right answer. Recall is writing it from memory.</p>
+      ${topicTable(unitSum("recogUnits"), unitSum("recallUnits"))}</div>
 
     <div class="section">
-      <h2>Accuracy by topic</h2>
-      <p class="sub">Quiz, match and fill-in answers for ${period === "all" ? "all periods" : "Period " + period}, ${esc(scopeName())}.</p>
-      <div class="bars">${scopeUnits().map(u => { let a = 0, c = 0; list.forEach(s => { const x = s.units[u.id]; if (x) { a += x.a || 0; c += x.c || 0; } }); return bar(u.name, c, a, "answers"); }).join("")}</div>
-    </div>
-
-    <div class="section">
-      <h2>Terms the class struggles with</h2>
-      <p class="sub">Lowest accuracy first. Shows terms with at least ${MIN_CLASS_TERM} answers and below 80% correct.</p>
+      <h2>Recognition: terms the class struggles with</h2>
+      <p class="sub">Quiz and match answers, lowest accuracy first. Terms with at least ${MIN_CLASS_ITEM} answers and below ${HIGH}% correct.</p>
       ${hard.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Topic</th><th>Correct</th><th>Answers</th><th>Students struggling</th><th>Said “Got it” but missing it</th></tr></thead><tbody>
-        ${hard.map(x => `<tr><td><b>${esc(x.t.t)}</b></td><td>${esc(unitName(x.t.u))}</td><td><span class="pill ${lvl(x.p)}">${x.p}%</span></td><td>${x.a}</td><td>${x.strug.length} <span class="muted small">${names(x.strug)}</span></td><td>${x.gotItMissed.length || "—"}</td></tr>`).join("")}
+        ${hard.map(x => `<tr><td><b>${esc(x.t.t)}</b></td><td>${esc(unitName(x.t.u))}</td><td><span class="pill ${lvl(x.p)}">${x.p}%</span></td><td>${x.a}</td><td>${x.strug.length} <span class="muted small">${names(x.strug)}</span></td><td>${x.gotMiss.length || "—"}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="panel empty">No trouble spots yet. Terms appear here once students have answered them a few times.</div>`}
     </div>
 
-    <div class="two">
-      <div class="section">
-        <h2>What the class knows</h2>
-        <p class="sub">80% or more correct.</p>
-        ${easy.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Correct</th><th>Answers</th></tr></thead><tbody>
-          ${easy.map(x => `<tr><td><b>${esc(x.t.t)}</b> <span class="muted small">${esc(unitName(x.t.u))}</span></td><td><span class="pill good">${x.p}%</span></td><td>${x.a}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">None yet.</div>`}
-      </div>
-      <div class="section">
-        <h2>Students who need support</h2>
-        <p class="sub">Below 60% correct, with at least 5 answers.</p>
-        ${needList.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Correct</th><th>Weakest topic</th></tr></thead><tbody>
-          ${needList.map(s => { const t = sumUnits(s), w = weakestUnit(s); return `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b></td><td>${s.period}</td><td><span class="pill bad">${pct(t.c, t.a)}%</span></td><td>${w ? esc(unitName(w.id)) + ` (${w.p}%)` : "—"}</td></tr>`; }).join("")}</tbody></table></div>` : `<div class="panel empty">No one is below 60% right now.</div>`}
-      </div>
+    <div class="section">
+      <h2>Recall: sentences the class struggles with</h2>
+      <p class="sub">Notes fill-in, lowest first-check accuracy first. Sentences with at least ${MIN_CLASS_ITEM} attempts and below ${HIGH}%.</p>
+      ${sentences.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Sentence</th><th>Topic</th><th>Correct</th><th>Attempts</th><th>Not recalled yet</th></tr></thead><tbody>
+        ${sentences.map(x => `<tr><td>${esc(blanked(x.n))}</td><td>${esc(unitName(x.n.u))}</td><td><span class="pill ${lvl(x.p)}">${x.p}%</span></td><td>${x.a}</td><td>${x.strug.length} <span class="muted small">${names(x.strug)}</span></td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="panel empty">No trouble spots yet. Sentences appear here once students have tried them a few times.</div>`}
     </div>
 
-    <div class="section">
-      <h2>Not practiced yet</h2>
-      <p class="sub">${untouched.length ? `${untouched.length} of ${scopeTerms().length} terms have no quiz or match answers from this group.` : "Every term has been practiced at least once."}</p>
-      ${untouched.length ? `<div class="chiplist">${untouched.map(x => `<span>${esc(x.t.t)}</span>`).join("")}</div>` : ""}
-    </div>`;
+    <div class="two">
+      <div class="section"><h2>What the class recognizes</h2><p class="sub">${HIGH}% or more correct in quiz and match.</p>
+        ${easy.length ? `<div class="chiplist">${easy.map(x => `<span>${esc(x.t.t)} · ${x.p}%</span>`).join("")}</div>` : `<div class="panel empty">None yet.</div>`}</div>
+      <div class="section"><h2>Students who need support</h2><p class="sub">Below ${LOW}% in recognition or recall, with at least ${MIN_STAGE} answers in that step.</p>
+        ${needList.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Recognition</th><th>Recall</th></tr></thead><tbody>
+          ${needList.map(({ s, m }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b></td><td>${s.period}</td><td>${stagePill(m.recP, m.rec.a)}</td><td>${stagePill(m.rclP, m.rcl.a)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">No one is below ${LOW}% right now.</div>`}</div>
+    </div>
+
+    <div class="section"><h2>Not practiced in Recognition yet</h2>
+      <p class="sub">${untouched.length ? `${untouched.length} of ${T.length} terms have no quiz or match answers from this group.` : "Every term has quiz or match answers."}</p>
+      ${untouched.length ? `<div class="chiplist">${untouched.map(x => `<span>${esc(x.t.t)}</span>`).join("")}</div>` : ""}</div>`;
   wireRows();
 }
 
 function renderStudents() {
-  const list = filtered().map(s => ({ s, t: sumUnits(s), st: status(s), w: weakestUnit(s) }));
+  const list = filtered().map(s => ({ s, m: metrics(s), w: weakestUnit(s) }));
   const sorters = {
     period: (a, b) => a.s.period - b.s.period || a.s.name.localeCompare(b.s.name),
     name: (a, b) => a.s.name.localeCompare(b.s.name),
-    low: (a, b) => (pct(a.t.c, a.t.a) ?? 101) - (pct(b.t.c, b.t.a) ?? 101),
+    lowrec: (a, b) => (a.m.recP ?? 101) - (b.m.recP ?? 101),
+    lowrcl: (a, b) => (a.m.rclP ?? 101) - (b.m.rclP ?? 101),
     recent: (a, b) => (b.s.lastActive?.getTime() || 0) - (a.s.lastActive?.getTime() || 0),
     inactive: (a, b) => (a.s.lastActive?.getTime() || 0) - (b.s.lastActive?.getTime() || 0)
   };
   list.sort(sorters[sortBy]);
   main.innerHTML = `
     <div class="row spread" style="margin-bottom:12px">
-      <span class="muted small">${list.length} student${list.length === 1 ? "" : "s"}. Select a student to see their details.</span>
+      <span class="muted small">${list.length} student${list.length === 1 ? "" : "s"} · ${esc(scopeName())}. Select a student to see their details.</span>
       <label class="small">Sort by <select class="sel" id="sort">
-        ${[["period", "Period, then name"], ["name", "Name"], ["low", "Lowest accuracy first"], ["recent", "Most recently active"], ["inactive", "Least recently active"]].map(([v, l]) => `<option value="${v}" ${sortBy === v ? "selected" : ""}>${l}</option>`).join("")}
+        ${[["period", "Period, then name"], ["name", "Name"], ["lowrec", "Lowest recognition first"], ["lowrcl", "Lowest recall first"], ["recent", "Most recently active"], ["inactive", "Least recently active"]].map(([v, l]) => `<option value="${v}" ${sortBy === v ? "selected" : ""}>${l}</option>`).join("")}
       </select></label>
     </div>
-    ${list.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Last active</th><th>Got it</th><th>Correct</th><th>Answers</th><th>Weakest topic</th><th>Status</th></tr></thead><tbody>
-      ${list.map(({ s, t, st, w }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b><br><span class="muted small">${esc(s.email)}</span></td><td>${s.period}</td><td>${fmtDate(s.lastActive)}</td><td>${knownCount(s)}/${scopeTerms().length}</td><td>${t.a ? `${pct(t.c, t.a)}%` : "—"}</td><td>${t.a}</td><td>${w ? esc(unitName(w.id)) : "—"}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="panel empty">No students here yet.</div>`}`;
+    ${list.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Last active</th><th>1 · Got it</th><th>2 · Recognized</th><th>Recognition</th><th>3 · Recalled</th><th>Recall</th><th>Weakest topic</th></tr></thead><tbody>
+      ${list.map(({ s, m, w }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b><br><span class="muted small">${esc(s.email)}</span></td><td>${s.period}</td><td>${fmtDate(s.lastActive)}</td>
+        <td>${m.got}/${m.nTerms}</td><td>${m.recognized}/${m.nTerms}</td><td>${stagePill(m.recP, m.rec.a)} <span class="muted small">${m.rec.a}</span></td>
+        <td>${m.recalled}/${m.nNotes}</td><td>${stagePill(m.rclP, m.rcl.a)} <span class="muted small">${m.rcl.a}</span></td><td>${w ? esc(unitName(w.id)) : "—"}</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="small muted">Recognition and Recall show percent correct, then the number of answers. Gray means fewer than ${MIN_STAGE} answers.</p>` : `<div class="panel empty">No students here yet.</div>`}`;
   $("#sort").onchange = e => { sortBy = e.target.value; renderStudents(); };
   wireRows();
 }
@@ -221,38 +261,39 @@ function wireRows() {
   });
 }
 
-async function renderStudent(s) {
+function renderStudent(s) {
   if (!s) { selUid = null; return render(); }
-  const t = sumUnits(s), st = status(s), rows = termRows(s);
-  const strug = rows.filter(r => r.a >= MIN_TERM && r.p < LOW * 100).sort((a, b) => a.p - b.p || b.a - a.a);
-  const mismatch = strug.filter(r => s.known.includes(r.t.id));
-  const strong = rows.filter(r => r.a >= MIN_TERM && r.p >= HIGH * 100).sort((a, b) => b.p - a.p || b.a - a.a);
+  const m = metrics(s);
+  const rows = scopeTerms().map(t => { const x = s.stats[t.id] || {}; const a = x.a || 0, c = x.c || 0; return { t, a, c, p: pct(c, a), st: x.s || 0 }; });
+  const strug = rows.filter(r => r.a >= MIN_ITEM && r.p < LOW).sort((a, b) => a.p - b.p || b.a - a.a);
+  const mismatch = rows.filter(r => s.known.includes(r.t.id) && r.a >= 1 && r.st < RECOG_GOAL && r.p < HIGH);
+  const strong = rows.filter(r => r.st >= RECOG_GOAL).sort((a, b) => b.p - a.p);
   const untouched = rows.filter(r => r.a === 0);
+  const missed = scopeNotes().map(n => ({ n, x: s.recall[n.id] })).filter(o => o.x && (o.x.a || 0) >= 1 && (o.x.s || 0) < RECALL_GOAL)
+    .sort((a, b) => pct(a.x.c || 0, a.x.a) - pct(b.x.c || 0, b.x.a));
+  const notTried = scopeNotes().filter(n => !s.recall[n.id]).length;
   main.innerHTML = `
     <button class="btn small" id="back">← Back to ${view === "class" ? "class summary" : "all students"}</button>
     <div class="row spread" style="margin:16px 0 14px;align-items:flex-end">
-      <div><h2 style="font-family:var(--display);font-size:28px;margin:0">${esc(s.name)}</h2><span class="muted">${esc(s.email)}</span></div>
+      <div><h2 style="font-family:var(--display);font-size:28px;margin:0">${esc(s.name)}</h2><span class="muted">${esc(s.email)} · Last active ${fmtDate(s.lastActive)} · ${esc(scopeName())}</span></div>
       <label class="small">Period <select class="sel" id="per">${[1, 2, 3, 4, 5, 6, 7].map(p => `<option ${p === s.period ? "selected" : ""}>${p}</option>`).join("")}</select></label>
     </div>
-    <div class="tiles">
-      <div class="stat"><b>${t.a ? pct(t.c, t.a) + "%" : "—"}</b><span>answers correct</span></div>
-      <div class="stat"><b>${t.a}</b><span>quiz, match and fill-in answers</span></div>
-      <div class="stat"><b>${knownCount(s)}<small style="font-size:16px">/${scopeTerms().length}</small></b><span>terms marked “Got it”</span></div>
-      <div class="stat"><b style="font-size:18px;line-height:1.5">${fmtDate(s.lastActive)}</b><span>last active</span></div>
-      <div class="stat"><b style="font-size:18px;line-height:1.5"><span class="pill ${st.cls}" style="font-size:15px">${st.label}</span></b><span>overall</span></div>
-    </div>
-    <div class="section"><h2>Accuracy by topic</h2><div class="bars">${scopeUnits().map(u => { const x = s.units[u.id] || {}; return bar(u.name, x.c || 0, x.a || 0, "answers"); }).join("")}</div></div>
+    ${pathCards(m.got, m.nTerms, m.recognized, m.recalled, m.nNotes, m.rec, m.rcl, false)}
+    <div class="section"><h2>Accuracy by topic</h2>${topicTable(id => s.recogUnits[id] || { a: 0, c: 0 }, id => s.recallUnits[id] || { a: 0, c: 0 })}</div>
     <div class="two">
-      <div class="section"><h2>Struggling with</h2><p class="sub">Below 60% correct, at least ${MIN_TERM} answers.</p>
+      <div class="section"><h2>Recognition: struggling with</h2><p class="sub">Below ${LOW}% correct in quiz and match, at least ${MIN_ITEM} answers.</p>
         ${strug.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Correct</th><th>Answers</th></tr></thead><tbody>${strug.map(r => `<tr><td><b>${esc(r.t.t)}</b> <span class="muted small">${esc(unitName(r.t.u))}</span>${s.known.includes(r.t.id) ? ` <span class="pill mid">said “Got it”</span>` : ""}</td><td><span class="pill bad">${r.p}%</span></td><td>${r.a}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">Nothing yet.</div>`}
-        ${mismatch.length ? `<p class="small" style="margin-top:8px"><b>${mismatch.length}</b> of these ${mismatch.length === 1 ? "is a term" : "are terms"} the student marked “Got it” on flashcards but keeps missing.</p>` : ""}
       </div>
-      <div class="section"><h2>Knows well</h2><p class="sub">80% or more correct, at least ${MIN_TERM} answers.</p>
-        ${strong.length ? `<div class="chiplist">${strong.map(r => `<span>${esc(r.t.t)} · ${r.p}%</span>`).join("")}</div>` : `<div class="panel empty">Nothing yet.</div>`}
+      <div class="section"><h2>Recall: sentences not recalled yet</h2><p class="sub">Tried, but not completed correctly on the first check most recently. ${notTried} sentence${notTried === 1 ? "" : "s"} not tried yet.</p>
+        ${missed.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Sentence</th><th>Correct</th><th>Tries</th></tr></thead><tbody>${missed.map(o => `<tr><td>${esc(blanked(o.n))}</td><td><span class="pill ${lvl(pct(o.x.c || 0, o.x.a))}">${pct(o.x.c || 0, o.x.a)}%</span></td><td>${o.x.a}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">Nothing yet.</div>`}
       </div>
     </div>
-    <div class="section"><h2>Not practiced yet</h2><p class="sub">${untouched.length} of ${scopeTerms().length} terms have no quiz or match answers.</p>
-      ${untouched.length ? `<div class="chiplist">${untouched.map(r => `<span>${esc(r.t.t)}</span>`).join("")}</div>` : ""}</div>
+    <div class="section"><h2>Self-check vs. Recognition</h2><p class="sub">Terms marked “Got it” on flashcards that aren't recognized yet. These show where the student is overconfident.</p>
+      ${mismatch.length ? `<div class="chiplist">${mismatch.map(r => `<span>${esc(r.t.t)} · ${r.p}% of ${r.a}</span>`).join("")}</div>` : `<div class="panel empty">None. Their “Got it” marks match their quiz and match results so far.</div>`}</div>
+    <div class="two">
+      <div class="section"><h2>Recognized</h2><p class="sub">${RECOG_GOAL} correct answers in a row.</p>${strong.length ? `<div class="chiplist">${strong.map(r => `<span>${esc(r.t.t)}</span>`).join("")}</div>` : `<div class="panel empty">Nothing yet.</div>`}</div>
+      <div class="section"><h2>Not practiced in Recognition yet</h2><p class="sub">${untouched.length} of ${m.nTerms} terms.</p>${untouched.length ? `<div class="chiplist">${untouched.map(r => `<span>${esc(r.t.t)}</span>`).join("")}</div>` : ""}</div>
+    </div>
     <div class="section"><h2>Recent answers</h2><div id="recent"><p class="muted">Loading…</p></div></div>`;
   $("#back").onclick = () => { selUid = null; render(); };
   $("#per").onchange = async e => {
@@ -272,34 +313,39 @@ async function loadRecent(s) {
   try {
     const F = fb.F;
     const snap = await F.getDocs(F.query(F.collection(fb.db, "responses"), F.where("uid", "==", s.uid), F.limit(500)));
-    const rows = snap.docs.map(d => d.data()).filter(r => r.mode !== "cards")
-      .sort((a, b) => (b.ts?.toMillis?.() || 0) - (a.ts?.toMillis?.() || 0)).slice(0, 30);
+    const rows = snap.docs.map(d => d.data()).sort((a, b) => (b.ts?.toMillis?.() || 0) - (a.ts?.toMillis?.() || 0)).slice(0, 40);
     if (!document.body.contains(box)) return;
-    const modeName = { quiz: "Quiz", match: "Match", fill: "Fill-in" };
-    box.innerHTML = rows.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>When</th><th>Activity</th><th>Item</th><th>Result</th></tr></thead><tbody>
+    const stepName = { cards: "1 · Flashcards", quiz: "2 · Quiz", match: "2 · Match", fill: "3 · Recall" };
+    box.innerHTML = rows.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>When</th><th>Step</th><th>Item</th><th>Result</th></tr></thead><tbody>
       ${rows.map(r => {
         let item = r.termId ? esc(TERM[r.termId]?.t || r.termId) : "";
-        if (r.mode === "fill") { const n = NOTE[r.detail?.noteId]; item = n ? esc(n.s.replace(/\[([^\]]+)\]/g, "___")) : esc(unitName(r.unit)); }
-        let res = r.correct ? `<span class="pill good">Correct</span>` : `<span class="pill bad">Missed</span>`;
+        const nid = r.noteId || r.detail?.noteId;
+        if (r.mode === "fill") { const n = NOTE[nid]; item = n ? esc(blanked(n)) : esc(unitName(r.unit)); }
+        let res;
+        if (r.mode === "cards") res = r.correct ? `<span class="pill good">Got it</span>` : `<span class="pill mid">Still learning</span>`;
+        else res = r.correct ? `<span class="pill good">Correct</span>` : `<span class="pill bad">Missed</span>`;
         if (r.mode === "quiz" && !r.correct && r.detail?.picked) res += ` <span class="muted small">chose ${esc(TERM[r.detail.picked]?.t || "")}</span>`;
         if (r.mode === "match" && !r.correct && r.detail?.pickedDef) res += ` <span class="muted small">matched it to the definition of ${esc(TERM[r.detail.pickedDef]?.t || "")}</span>`;
         if (r.mode === "fill" && r.detail?.revealed) res += ` <span class="muted small">showed answers</span>`;
         if (r.mode === "fill" && r.detail?.wrong?.length) res += ` <span class="muted small">${r.detail.wrong.map(w => `wrote “${esc(w.typed || "blank")}” for ${esc(w.want)}`).join("; ")}</span>`;
-        return `<tr><td>${fmtDate(r.ts?.toDate?.())}</td><td>${modeName[r.mode] || r.mode}</td><td>${item}</td><td>${res}</td></tr>`;
+        if (r.mode === "fill" && r.detail?.usedBank) res += ` <span class="muted small">(used word bank)</span>`;
+        return `<tr><td>${fmtDate(r.ts?.toDate?.())}</td><td>${stepName[r.mode] || r.mode}</td><td>${item}</td><td>${res}</td></tr>`;
       }).join("")}</tbody></table></div>` : `<p class="muted">No answers yet.</p>`;
   } catch (e) { console.error(e); box.innerHTML = `<p class="muted">Couldn't load recent answers.</p>`; }
 }
 
 /* ---------- CSV ---------- */
 function downloadCSV() {
-  const list = filtered();
-  const head = ["Name", "Email", "Period", "Last active", "Got it (of " + scopeTerms().length + ")", "Answers", "Correct %", "Status", "Weakest topic", ...scopeUnits().map(u => u.name + " %"), "Struggling terms"];
+  const list = filtered(), U = scopeUnits();
+  const head = ["Name", "Email", "Period", "Last active", "Got it", "Recognized", "Recognition answers", "Recognition %", "Recalled", "Recall answers", "Recall %", "Weakest topic",
+    ...U.flatMap(u => [u.name + " recognition %", u.name + " recall %"]), "Recognition: struggling terms", "Recall: sentences not recalled"];
   const lines = [head];
   list.forEach(s => {
-    const t = sumUnits(s), w = weakestUnit(s);
-    const strug = termRows(s).filter(r => r.a >= MIN_TERM && r.p < LOW * 100).map(r => r.t.t).join("; ");
-    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", knownCount(s), t.a, pct(t.c, t.a) ?? "", status(s).label, w ? unitName(w.id) : "",
-      ...scopeUnits().map(u => { const x = s.units[u.id]; return x ? pct(x.c || 0, x.a) ?? "" : ""; }), strug]);
+    const m = metrics(s), w = weakestUnit(s);
+    const strug = scopeTerms().filter(t => { const x = s.stats[t.id]; return x && (x.a || 0) >= MIN_ITEM && pct(x.c || 0, x.a) < LOW; }).map(t => t.t).join("; ");
+    const missed = scopeNotes().filter(n => { const x = s.recall[n.id]; return x && (x.a || 0) >= 1 && (x.s || 0) < RECALL_GOAL; }).length;
+    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", `${m.got}/${m.nTerms}`, `${m.recognized}/${m.nTerms}`, m.rec.a, m.recP ?? "", `${m.recalled}/${m.nNotes}`, m.rcl.a, m.rclP ?? "", w ? unitName(w.id) : "",
+      ...U.flatMap(u => [pct(s.recogUnits[u.id]?.c || 0, s.recogUnits[u.id]?.a || 0) ?? "", pct(s.recallUnits[u.id]?.c || 0, s.recallUnits[u.id]?.a || 0) ?? ""]), strug, missed]);
   });
   const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
   const a = document.createElement("a");
@@ -313,19 +359,26 @@ function makeDemo() {
   let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const first = ["Ava", "Liam", "Noah", "Emma", "Mia", "Eli", "Zoe", "Owen", "Lily", "Jack", "Ruby", "Leo", "Nora", "Cole", "Ivy", "Max", "Ella", "Sam", "Gia", "Ben", "Kai", "Luna", "Finn", "Rose"];
   const last = ["Demo", "Sample", "Example", "Test"];
-  const hardness = Object.fromEntries(TERMS.map(t => [t.id, rnd() * 0.5 + (["macro", "enz", "gen"].includes(t.u) ? 0.25 : 0)]));
+  const hard = Object.fromEntries(TERMS.map(t => [t.id, rnd() * 0.5 + (["macro", "enz", "gen"].includes(t.u) ? 0.25 : 0)]));
+  const hardN = Object.fromEntries(NOTES.map(n => [n.id, rnd() * 0.5 + 0.15]));
   return first.map((f, i) => {
-    const skill = 0.35 + rnd() * 0.6, stats = {}, units = {}, known = [];
+    const skill = 0.35 + rnd() * 0.6, stats = {}, recall = {}, recogUnits = {}, recallUnits = {}, known = [];
+    const add = (map, u, ok) => { map[u] = map[u] || { a: 0, c: 0 }; map[u].a++; if (ok) map[u].c++; };
     TERMS.forEach(t => {
+      if (rnd() < skill * 0.9) known.push(t.id);
       if (rnd() < 0.35) return;
-      const a = 1 + Math.floor(rnd() * 5); let c = 0;
-      for (let k = 0; k < a; k++) if (rnd() < Math.min(0.97, skill + 0.4 - hardness[t.id])) c++;
-      stats[t.id] = { a, c };
-      units[t.u] = units[t.u] || { a: 0, c: 0 }; units[t.u].a += a; units[t.u].c += c;
-      if (rnd() < skill) known.push(t.id);
+      const x = { a: 0, c: 0, s: 0 }, n = 1 + Math.floor(rnd() * 5);
+      for (let k = 0; k < n; k++) { const ok = rnd() < Math.min(0.97, skill + 0.4 - hard[t.id]); x.a++; if (ok) { x.c++; x.s++; } else x.s = 0; add(recogUnits, t.u, ok); }
+      stats[t.id] = x;
+    });
+    NOTES.forEach(nt => {
+      if (rnd() < 0.5) return;
+      const x = { a: 0, c: 0, s: 0 }, n = 1 + Math.floor(rnd() * 3);
+      for (let k = 0; k < n; k++) { const ok = rnd() < Math.min(0.95, skill + 0.25 - hardN[nt.id]); x.a++; if (ok) { x.c++; x.s++; } else x.s = 0; add(recallUnits, nt.u, ok); }
+      recall[nt.id] = x;
     });
     return norm({ uid: "demo" + i, name: `${f} ${last[i % 4]}`, email: `${f.toLowerCase()}.demo@example.com`, period: 1 + (i % 7),
-      lastActive: new Date(Date.now() - rnd() * 12 * 864e5), stats, units, known, counts: {} });
+      lastActive: new Date(Date.now() - rnd() * 12 * 864e5), stats, recall, recogUnits, recallUnits, known });
   });
 }
 

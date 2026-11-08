@@ -1,6 +1,46 @@
 // Biology Vocab: the study path (Flashcards → Recognition → Recall) shared by every version of the site.
 // Storage is handled by an "adapter" passed in by the page (Firebase on GitHub, browser storage in the Claude preview).
-import { SETS, UNITS, TERMS, NOTES } from "./data.js";
+// The word list (data.js) is loaded at start-up with loadData(), never cached, so uploading
+// a new data.js is all it takes to add vocabulary. checkData() lists mistakes in plain words.
+export let SETS = [], UNITS = [], TERMS = [], NOTES = [];
+export async function loadData() {
+  try {
+    const d = await import("./data.js?v=" + Date.now());
+    for (const k of ["SETS", "UNITS", "TERMS", "NOTES"]) if (!Array.isArray(d[k])) throw new Error(`The list ${k} is missing from data.js.`);
+    SETS = d.SETS; UNITS = d.UNITS; TERMS = d.TERMS; NOTES = d.NOTES;
+    return { ok: true, problems: checkData() };
+  } catch (e) {
+    console.error(e);
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+export const dataErrorHTML = err => `<h2>The word list has a mistake</h2>
+  <p>The site couldn't read <b>data.js</b>, so it can't start. This usually means a missing comma, quote mark or bracket in the most recent edit.</p>
+  <p><b>Teachers:</b> on GitHub, open data.js and choose <b>History</b> to see the last change, or upload the previous copy again.</p>
+  <p class="small muted">Details: ${String(err).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</p>`;
+export function checkData() {
+  const out = [], seen = (list, what) => { const s = new Set(); list.forEach(x => { if (!x || !x.id) out.push(`A ${what} is missing its "id".`); else if (s.has(x.id)) out.push(`The ${what} id "${x.id}" is used more than once.`); else s.add(x.id); }); return s; };
+  const sets = seen(SETS, "set"), units = seen(UNITS, "lesson"); seen(TERMS, "term"); seen(NOTES, "fill-in sentence");
+  UNITS.forEach(u => {
+    if (u && !u.name) out.push(`Lesson "${u.id}" is missing its "name".`);
+    if (u && !sets.has(u.set)) out.push(`Lesson "${u.id}" has set "${u.set}", which isn't in SETS.`);
+    if (u && u.start && u.start !== "TBD" && !(isDate(u.start) && !isNaN(new Date(u.start + "T00:00:00")))) out.push(`Lesson "${u.id}" has start "${u.start}". Use "TBD" or a date like "2027-02-15".`);
+  });
+  TERMS.forEach(t => {
+    if (!t) return;
+    if (t.id && !/^[a-z0-9_]+$/.test(t.id)) out.push(`Term id "${t.id}" should use only lowercase letters, numbers and underscores.`);
+    if (!t.t || !t.d) out.push(`Term "${t.id}" needs both "t" (the word) and "d" (the definition).`);
+    if (!units.has(t.u)) out.push(`Term "${t.id}" has lesson "${t.u}", which isn't in UNITS.`);
+  });
+  NOTES.forEach(n => {
+    if (!n) return;
+    if (!units.has(n.u)) out.push(`Fill-in sentence "${n.id}" has lesson "${n.u}", which isn't in UNITS.`);
+    if (!/\[[^\]]+\]/.test(n.s || "")) out.push(`Fill-in sentence "${n.id}" has no [blank] in it.`);
+    else if ((n.s.match(/\[/g) || []).length !== (n.s.match(/\]/g) || []).length) out.push(`Fill-in sentence "${n.id}" has an unmatched [ or ].`);
+  });
+  return out;
+}
+export const problemsHTML = list => list.length ? `<div class="notice"><b>data.js needs a fix (only teachers see this):</b><ul style="margin:6px 0 0;padding-left:20px">${list.slice(0, 12).map(p => `<li>${p.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</li>`).join("")}</ul>${list.length > 12 ? `<p style="margin:6px 0 0">…and ${list.length - 12} more.</p>` : ""}</div>` : "";
 
 export const RECOG_GOAL = 2;   // correct answers in a row before a term counts as recognized
 export const RECALL_GOAL = 1;  // first-check-correct completions in a row before a sentence counts as recalled
@@ -11,7 +51,10 @@ export const LONG_TERM_BOX = 4;               // box 4+ = remembered after a wee
 export const REVIEW_SESSION = 20;             // items per Daily Review round
 export const dayNum = (date = new Date()) => Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 864e5);
 export const todayISO = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
-export const isOpen = u => !u.start || u.start <= todayISO();
+// A lesson is open with no start date, or once its date arrives. "TBD" (or anything that isn't a date) keeps it hidden.
+export const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(v || "");
+export const isOpen = u => !u.start || (isDate(u.start) && u.start <= todayISO());
+export const opensLabel = u => isDate(u.start) ? "opens " + new Date(u.start + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "date not set";
 // Items practiced before spaced repetition existed have no box yet: their streak sets the box and they're due now.
 export const boxOf = st => !st || !st.a ? 0 : (st.b ?? Math.min(5, Math.max(1, st.s || 0)));
 export const dueDay = st => !st || !st.a ? null : (st.d ?? dayNum());
@@ -25,7 +68,6 @@ export function updateItem(st, correct) {
   st.l = t;
   return st;
 }
-const fmtStart = iso => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
 const PRINT_URL = "https://docs.google.com/document/d/1UZq2VV1L9wvmPuFDq2-9GFkAlkarSOsqft8QgDiD_F4/edit?usp=sharing";
 const STEPS = {
@@ -96,7 +138,7 @@ export function createCore(adapter, opts = {}) {
     if (!["all", ...sets.map(s => s.id), ...open.map(u => u.id)].includes(unit)) unit = "all";
     const chip = (id, name, cls = "") => `<button class="chip ${cls}" data-unit="${id}" aria-pressed="${id === unit}">${esc(name)}</button>`;
     $("#units").innerHTML = chip("all", "All terms") + sets.map(s => chip(s.id, s.name, "half")).join("")
-      + `<span class="chipsep" aria-hidden="true"></span>` + open.map(u => chip(u.id, isOpen(u) ? u.name : `${u.name} (opens ${fmtStart(u.start)})`, isOpen(u) ? "" : "locked")).join("");
+      + `<span class="chipsep" aria-hidden="true"></span>` + open.map(u => chip(u.id, isOpen(u) ? u.name : `${u.name} (${opensLabel(u)})`, isOpen(u) ? "" : "locked")).join("");
   }
   $("#units").addEventListener("click", e => {
     const b = e.target.closest("[data-unit]"); if (!b) return;

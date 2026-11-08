@@ -1,14 +1,14 @@
 // Biology Vocab teacher dashboard. Tracks the three study-path steps separately:
 // Flashcards (self-reported "Got it"), Recognition (quiz + match) and Recall (notes fill-in).
-import { SETS, UNITS, TERMS, NOTES } from "./data.js";
-import { RECOG_GOAL, RECALL_GOAL, INTERVALS, LONG_TERM_BOX, dayNum, isOpen, boxOf, dueDay } from "./core.js";
+import * as Core from "./core.js";
+import { RECOG_GOAL, RECALL_GOAL, INTERVALS, LONG_TERM_BOX, dayNum, isOpen, opensLabel, boxOf, dueDay, loadData, dataErrorHTML, problemsHTML } from "./core.js";
 import { loadFirebase, configured, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const unitName = id => (UNITS.find(u => u.id === id) || {}).name || id;
-const TERM = Object.fromEntries(TERMS.map(t => [t.id, t]));
-const NOTE = Object.fromEntries(NOTES.map(n => [n.id, n]));
+// Filled in by boot() from data.js (loaded fresh every time, see core.js).
+let SETS = [], UNITS = [], TERMS = [], NOTES = [], TERM = {}, NOTE = {}, dataProblems = [];
 const blanked = n => n.s.replace(/\[([^\]]+)\]/g, "___");
 const gate = $("#gate"), main = $("#main");
 const DEMO = new URLSearchParams(location.search).has("demo");
@@ -95,6 +95,11 @@ function showSignIn(msg) {
 }
 
 async function boot() {
+  const data = await loadData();
+  if (!data.ok) { showGate(dataErrorHTML(data.error)); return; }
+  ({ SETS, UNITS, TERMS, NOTES } = Core);
+  TERM = Object.fromEntries(TERMS.map(t => [t.id, t])); NOTE = Object.fromEntries(NOTES.map(n => [n.id, n]));
+  dataProblems = data.problems;
   if (DEMO) { students = makeDemo(); $("#demoBanner").hidden = false; $("#who").innerHTML = `<a class="linkbtn" href="dashboard.html">Exit demo</a>`; startApp(); return; }
   if (!configured()) { showGate(`<h2>Almost ready</h2><p>Paste your Firebase config into <code>firebase-config.js</code> (step 6 in SETUP.md). Until then you can <a href="dashboard.html?demo">preview the dashboard with made-up data</a>.</p>`); return; }
   try { fb = await loadFirebase(); } catch (e) { showGate(`<h2>Can't reach the server</h2><p>Check your connection and reload.</p>`); return; }
@@ -143,7 +148,9 @@ function render() {
   const counts = {}; students.forEach(s => counts[s.period] = (counts[s.period] || 0) + 1);
   $("#periods").innerHTML = [["all", `All periods (${students.length})`], ...[1, 2, 3, 4, 5, 6, 7].map(p => [String(p), `P${p} (${counts[p] || 0})`])]
     .map(([v, l]) => `<button class="chip" data-p="${v}" aria-pressed="${period === v}">${l}</button>`).join("");
-  $("#scopes").innerHTML = [["all", "All terms"], ...SETS.map(x => [x.id, x.name])]
+  const openSets = SETS.filter(x => UNITS.some(u => u.set === x.id && isOpen(u)));
+  if (scope !== "all" && !openSets.some(x => x.id === scope)) scope = "all";
+  $("#scopes").innerHTML = [["all", "All terms"], ...openSets.map(x => [x.id, x.name])]
     .map(([v, l]) => `<button class="chip${v === "all" ? "" : " half"}" data-s="${v}" aria-pressed="${scope === v}">${esc(l)}</button>`).join("");
   document.querySelectorAll("nav.modes button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
   if (selUid) return renderStudent(students.find(s => s.uid === selUid));
@@ -216,8 +223,9 @@ function renderClass() {
   const upcoming = UNITS.filter(u => !isOpen(u) && (scope === "all" || u.set === scope));
   const unknown = new Set(); students.forEach(st => { Object.keys(st.stats).forEach(k => { if (!TERM[k]) unknown.add(k); }); Object.keys(st.recall).forEach(k => { if (!NOTE[k]) unknown.add(k); }); });
   main.innerHTML = `
+    ${problemsHTML(dataProblems)}
     ${unknown.size ? `<div class="notice">Saved progress includes ${unknown.size} term or sentence id${unknown.size === 1 ? "" : "s"} that ${unknown.size === 1 ? "isn't" : "aren't"} in data.js (${[...unknown].slice(0, 5).map(esc).join(", ")}${unknown.size > 5 ? ", …" : ""}). If an id was renamed, change it back so students keep that progress.</div>` : ""}
-    <div class="row small muted" style="gap:18px;margin-bottom:12px"><span><b style="color:var(--ink)">${list.length}</b> students signed up</span><span><b style="color:var(--ink)">${active}</b> practiced in the last 7 days</span><span>Showing ${esc(scopeName())}</span>${upcoming.length ? `<span>Coming up: ${upcoming.map(u => `${esc(u.name)} (opens ${new Date(u.start + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })})`).join(", ")}</span>` : ""}</div>
+    <div class="row small muted" style="gap:18px;margin-bottom:12px"><span><b style="color:var(--ink)">${list.length}</b> students signed up</span><span><b style="color:var(--ink)">${active}</b> practiced in the last 7 days</span><span>Showing ${esc(scopeName())}</span>${upcoming.length ? `<span>Coming up: ${upcoming.map(u => `${esc(u.name)} (${opensLabel(u)})`).join(", ")}</span>` : ""}</div>
     ${pathCards(avg("got"), T.length, avg("recognized"), avg("recalled"), N.length, sum("rec"), sum("rcl"), true)}
 
     <div class="section"><h2>Daily Review (spaced repetition)</h2>

@@ -1,5 +1,5 @@
 // Biology Vocab student site: Google sign-in, period picker, and saving progress to Firestore.
-import { createCore } from "./core.js";
+import { createCore, loadData, dataErrorHTML, problemsHTML } from "./core.js";
 import { loadFirebase, configured, isSchoolEmail, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
@@ -107,7 +107,11 @@ function renderWho(user) {
 }
 
 /* ---------- auth ---------- */
+let dataProblems = [];
 async function boot() {
+  const data = await loadData();
+  if (!data.ok) { showGate(dataErrorHTML(data.error)); return; }
+  dataProblems = data.problems;
   if (!configured()) {
     showGate(`<h2>Almost ready</h2><p>This site isn't connected to Firebase yet. Teachers: follow step 6 in SETUP.md to paste your Firebase config into <code>firebase-config.js</code>.</p>`);
     return;
@@ -151,7 +155,9 @@ function start(user, data) {
   profile = { uid: user.uid, name: data.name || user.displayName || user.email, email: user.email, period: data.period };
   renderWho(user);
   showApp();
-  if (!core) core = createCore(adapter, { preview: isTeacherEmail(user.email) });
+  const teacher = isTeacherEmail(user.email), box = $("#dataProblems");
+  if (box) box.innerHTML = teacher ? problemsHTML(dataProblems) : "";
+  if (!core) core = createCore(adapter, { preview: teacher });
   core.start({ known: data.known || [], stats: data.stats || {}, recall: data.recall || {} });
   fb.F.updateDoc(uref, { lastActive: fb.F.serverTimestamp() }).catch(() => {});
 }

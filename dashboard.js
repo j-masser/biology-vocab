@@ -1,7 +1,7 @@
 // Biology Vocab teacher dashboard. Tracks the three study-path steps separately:
 // Flashcards (self-reported "Got it"), Recognition (quiz + match) and Recall (notes fill-in).
 import { SETS, UNITS, TERMS, NOTES } from "./data.js";
-import { RECOG_GOAL, RECALL_GOAL } from "./core.js";
+import { RECOG_GOAL, RECALL_GOAL, INTERVALS, LONG_TERM_BOX, dayNum, isOpen, boxOf, dueDay } from "./core.js";
 import { loadFirebase, configured, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
@@ -22,7 +22,8 @@ const LOW = 60, HIGH = 80;   // percent: below 60 = needs support, 80+ = strong
 let fb = null, students = [], period = "all", scope = "all", view = "class", selUid = null, sortBy = "period";
 
 /* ---------- scope + per-student numbers ---------- */
-const scopeUnits = () => UNITS.filter(u => scope === "all" || u.set === scope);
+// Only lessons that have opened (no "start" date, or a start date that has passed) count on the dashboard.
+const scopeUnits = () => UNITS.filter(u => isOpen(u) && (scope === "all" || u.set === scope));
 const scopeIds = () => new Set(scopeUnits().map(u => u.id));
 const scopeTerms = () => { const ids = scopeIds(); return TERMS.filter(t => ids.has(t.u)); };
 const scopeNotes = () => { const ids = scopeIds(); return NOTES.filter(n => ids.has(n.u)); };
@@ -35,8 +36,18 @@ const sumOver = (map) => scopeUnits().reduce((t, u) => { const x = map[u.id] || 
 
 function metrics(s) {
   const terms = scopeTerms(), notes = scopeNotes();
-  const rec = sumOver(s.recogUnits), rcl = sumOver(s.recallUnits);
+  const rec = sumOver(s.recogUnits), rcl = sumOver(s.recallUnits), t = dayNum();
+  const recItems = terms.map(x => s.stats[x.id]), rclItems = notes.map(n => s.recall[n.id]);
+  const isDue = st => { const d = dueDay(st); return d != null && d <= t; };
+  const isLate = st => { const d = dueDay(st); return d != null && d <= t - 3; };
+  const boxes = items => [1, 2, 3, 4, 5].map(b => items.filter(st => boxOf(st) === b).length);
+  const both = [...recItems, ...rclItems];
   return {
+    due: both.filter(isDue).length, late: both.filter(isLate).length,
+    longTerm: recItems.filter(st => boxOf(st) >= LONG_TERM_BOX).length,
+    reviewedWeek: both.filter(st => st && st.l != null && st.l >= t - 6).length,
+    started: both.some(st => st && st.a),
+    recBoxes: boxes(recItems), rclBoxes: boxes(rclItems),
     got: terms.filter(t => s.known.includes(t.id)).length,
     recognized: terms.filter(t => (s.stats[t.id]?.s || 0) >= RECOG_GOAL).length,
     recalled: notes.filter(n => (s.recall[n.id]?.s || 0) >= RECALL_GOAL).length,
@@ -152,6 +163,16 @@ function pathCards(got, nT, recog, rcl, nN, rec, rclAcc, avg) {
     ${card(3, "Recall", "sentences recalled", rcl, nN, "m3", rclAcc.a ? `<b>${pct(rclAcc.c, rclAcc.a)}%</b> correct on ${rclAcc.a} fill-in sentences` : "No fill-in answers yet")}
   </div>`;
 }
+const BOX_COLORS = ["lv-bad", "lv-mid", "bx3", "bx4", "lv-good"];
+function boxBar(label, counts, total, what) {
+  const notStarted = Math.max(0, total - counts.reduce((a, b) => a + b, 0));
+  const seg = (n, cls, name) => n ? `<i class="${cls}" style="width:${n / total * 100}%" title="${name}: ${n}"></i>` : "";
+  return `<div class="boxrow"><span class="lbl">${label}</span>
+    <div class="stack" role="img" aria-label="${label}: ${counts.map((n, k) => `box ${k + 1}: ${n}`).join(", ")}, not started: ${notStarted}">${counts.map((n, k) => seg(n, BOX_COLORS[k], `Box ${k + 1}`)).join("")}${seg(notStarted, "ns", "Not started")}</div>
+    <span class="val">${total} ${what}</span></div>`;
+}
+const boxLegend = () => `<div class="legend">${[1, 2, 3, 4, 5].map(b => `<span><i class="${BOX_COLORS[b - 1]}"></i>Box ${b} · every ${INTERVALS[b]} day${b > 1 ? "s" : ""}</span>`).join("")}<span><i class="ns"></i>Not started</span></div>`;
+
 function topicTable(getRec, getRcl) {
   return `<div class="tablewrap"><table class="data topics"><thead><tr><th>Topic</th><th>Recognition (quiz + match)</th><th>Recall (fill-in)</th></tr></thead><tbody>
     ${scopeUnits().map(u => { const r = getRec(u.id), c = getRcl(u.id), rp = pct(r.c, r.a), cp = pct(c.c, c.a);
@@ -189,9 +210,28 @@ function renderClass() {
   const needList = ms.filter(x => needsSupport(x.m)).sort((a, b) => Math.min(a.m.recP ?? 101, a.m.rclP ?? 101) - Math.min(b.m.recP ?? 101, b.m.rclP ?? 101));
   const unitSum = key => id => list.reduce((t, s) => { const x = s[key][id] || {}; return { a: t.a + (x.a || 0), c: t.c + (x.c || 0) }; }, { a: 0, c: 0 });
 
+  const started = ms.filter(x => x.m.started);
+  const caughtUp = started.filter(x => x.m.due === 0).length, behind = ms.filter(x => x.m.late >= 5);
+  const boxSum = k => [0, 1, 2, 3, 4].map(i => ms.reduce((t, x) => t + x.m[k][i], 0));
+  const upcoming = UNITS.filter(u => !isOpen(u) && (scope === "all" || u.set === scope));
+  const unknown = new Set(); students.forEach(st => { Object.keys(st.stats).forEach(k => { if (!TERM[k]) unknown.add(k); }); Object.keys(st.recall).forEach(k => { if (!NOTE[k]) unknown.add(k); }); });
   main.innerHTML = `
-    <div class="row small muted" style="gap:18px;margin-bottom:12px"><span><b style="color:var(--ink)">${list.length}</b> students signed up</span><span><b style="color:var(--ink)">${active}</b> practiced in the last 7 days</span><span>Showing ${esc(scopeName())}</span></div>
+    ${unknown.size ? `<div class="notice">Saved progress includes ${unknown.size} term or sentence id${unknown.size === 1 ? "" : "s"} that ${unknown.size === 1 ? "isn't" : "aren't"} in data.js (${[...unknown].slice(0, 5).map(esc).join(", ")}${unknown.size > 5 ? ", …" : ""}). If an id was renamed, change it back so students keep that progress.</div>` : ""}
+    <div class="row small muted" style="gap:18px;margin-bottom:12px"><span><b style="color:var(--ink)">${list.length}</b> students signed up</span><span><b style="color:var(--ink)">${active}</b> practiced in the last 7 days</span><span>Showing ${esc(scopeName())}</span>${upcoming.length ? `<span>Coming up: ${upcoming.map(u => `${esc(u.name)} (opens ${new Date(u.start + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })})`).join(", ")}</span>` : ""}</div>
     ${pathCards(avg("got"), T.length, avg("recognized"), avg("recalled"), N.length, sum("rec"), sum("rcl"), true)}
+
+    <div class="section"><h2>Daily Review (spaced repetition)</h2>
+      <p class="sub">Items come back after 1, 2, 4, 8 and 16 days as students get them right. A miss sends an item back to box 1.</p>
+      <div class="tiles">
+        <div class="stat"><b>${caughtUp}<small style="font-size:16px">/${started.length}</small></b><span>students caught up (nothing due)</span></div>
+        <div class="stat"><b>${avg("due")}</b><span>items due per student (average)</span></div>
+        <div class="stat"><b>${behind.length}</b><span>students with 5+ items 3 or more days late</span></div>
+        <div class="stat"><b>${avg("longTerm")}<small style="font-size:16px">/${T.length}</small></b><span>terms in long-term memory, box ${LONG_TERM_BOX}+ (average)</span></div>
+      </div>
+      <div class="bars" style="margin-top:14px">${boxBar("Recognition", boxSum("recBoxes"), T.length * list.length, "student-terms")}${boxBar("Recall", boxSum("rclBoxes"), N.length * list.length, "student-sentences")}</div>
+      ${boxLegend()}
+      ${behind.length ? `<p class="small" style="margin-top:10px"><b>Falling behind on review:</b> ${behind.sort((a, b) => b.m.late - a.m.late).map(x => `${esc(x.s.name)} (${x.m.late} late)`).join(", ")}</p>` : ""}
+    </div>
 
     <div class="section"><h2>Accuracy by topic</h2><p class="sub">Recognition is choosing the right answer. Recall is writing it from memory.</p>
       ${topicTable(unitSum("recogUnits"), unitSum("recallUnits"))}</div>
@@ -233,6 +273,7 @@ function renderStudents() {
     name: (a, b) => a.s.name.localeCompare(b.s.name),
     lowrec: (a, b) => (a.m.recP ?? 101) - (b.m.recP ?? 101),
     lowrcl: (a, b) => (a.m.rclP ?? 101) - (b.m.rclP ?? 101),
+    due: (a, b) => b.m.due - a.m.due || b.m.late - a.m.late,
     recent: (a, b) => (b.s.lastActive?.getTime() || 0) - (a.s.lastActive?.getTime() || 0),
     inactive: (a, b) => (a.s.lastActive?.getTime() || 0) - (b.s.lastActive?.getTime() || 0)
   };
@@ -241,15 +282,16 @@ function renderStudents() {
     <div class="row spread" style="margin-bottom:12px">
       <span class="muted small">${list.length} student${list.length === 1 ? "" : "s"} · ${esc(scopeName())}. Select a student to see their details.</span>
       <label class="small">Sort by <select class="sel" id="sort">
-        ${[["period", "Period, then name"], ["name", "Name"], ["lowrec", "Lowest recognition first"], ["lowrcl", "Lowest recall first"], ["recent", "Most recently active"], ["inactive", "Least recently active"]].map(([v, l]) => `<option value="${v}" ${sortBy === v ? "selected" : ""}>${l}</option>`).join("")}
+        ${[["period", "Period, then name"], ["name", "Name"], ["lowrec", "Lowest recognition first"], ["lowrcl", "Lowest recall first"], ["due", "Most review due first"], ["recent", "Most recently active"], ["inactive", "Least recently active"]].map(([v, l]) => `<option value="${v}" ${sortBy === v ? "selected" : ""}>${l}</option>`).join("")}
       </select></label>
     </div>
-    ${list.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Last active</th><th>1 · Got it</th><th>2 · Recognized</th><th>Recognition</th><th>3 · Recalled</th><th>Recall</th><th>Weakest topic</th></tr></thead><tbody>
+    ${list.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Student</th><th>Period</th><th>Last active</th><th>1 · Got it</th><th>2 · Recognized</th><th>Recognition</th><th>3 · Recalled</th><th>Recall</th><th>Review due</th><th>Weakest topic</th></tr></thead><tbody>
       ${list.map(({ s, m, w }) => `<tr class="click" tabindex="0" data-uid="${s.uid}"><td><b>${esc(s.name)}</b><br><span class="muted small">${esc(s.email)}</span></td><td>${s.period}</td><td>${fmtDate(s.lastActive)}</td>
         <td>${m.got}/${m.nTerms}</td><td>${m.recognized}/${m.nTerms}</td><td>${stagePill(m.recP, m.rec.a)} <span class="muted small">${m.rec.a}</span></td>
-        <td>${m.recalled}/${m.nNotes}</td><td>${stagePill(m.rclP, m.rcl.a)} <span class="muted small">${m.rcl.a}</span></td><td>${w ? esc(unitName(w.id)) : "—"}</td></tr>`).join("")}
+        <td>${m.recalled}/${m.nNotes}</td><td>${stagePill(m.rclP, m.rcl.a)} <span class="muted small">${m.rcl.a}</span></td>
+        <td>${!m.started ? "—" : m.due ? `${m.due}${m.late ? ` <span class="pill bad">${m.late} late</span>` : ""}` : `<span class="pill good">Caught up</span>`}</td><td>${w ? esc(unitName(w.id)) : "—"}</td></tr>`).join("")}
     </tbody></table></div>
-    <p class="small muted">Recognition and Recall show percent correct, then the number of answers. Gray means fewer than ${MIN_STAGE} answers.</p>` : `<div class="panel empty">No students here yet.</div>`}`;
+    <p class="small muted">Recognition and Recall show percent correct, then the number of answers. Gray means fewer than ${MIN_STAGE} answers. “Late” counts review items due 3 or more days ago.</p>` : `<div class="panel empty">No students here yet.</div>`}`;
   $("#sort").onchange = e => { sortBy = e.target.value; renderStudents(); };
   wireRows();
 }
@@ -279,6 +321,16 @@ function renderStudent(s) {
       <label class="small">Period <select class="sel" id="per">${[1, 2, 3, 4, 5, 6, 7].map(p => `<option ${p === s.period ? "selected" : ""}>${p}</option>`).join("")}</select></label>
     </div>
     ${pathCards(m.got, m.nTerms, m.recognized, m.recalled, m.nNotes, m.rec, m.rcl, false)}
+    <div class="section"><h2>Daily Review (spaced repetition)</h2>
+      <div class="tiles">
+        <div class="stat"><b>${m.due}</b><span>items due now</span></div>
+        <div class="stat"><b>${m.late}</b><span>due 3 or more days ago</span></div>
+        <div class="stat"><b>${m.longTerm}<small style="font-size:16px">/${m.nTerms}</small></b><span>terms in long-term memory (box ${LONG_TERM_BOX}+)</span></div>
+        <div class="stat"><b>${m.reviewedWeek}</b><span>items practiced in the last 7 days</span></div>
+      </div>
+      <div class="bars" style="margin-top:14px">${boxBar("Recognition", m.recBoxes, m.nTerms, "terms")}${boxBar("Recall", m.rclBoxes, m.nNotes, "sentences")}</div>
+      ${boxLegend()}
+    </div>
     <div class="section"><h2>Accuracy by topic</h2>${topicTable(id => s.recogUnits[id] || { a: 0, c: 0 }, id => s.recallUnits[id] || { a: 0, c: 0 })}</div>
     <div class="two">
       <div class="section"><h2>Recognition: struggling with</h2><p class="sub">Below ${LOW}% correct in quiz and match, at least ${MIN_ITEM} answers.</p>
@@ -329,7 +381,8 @@ async function loadRecent(s) {
         if (r.mode === "fill" && r.detail?.revealed) res += ` <span class="muted small">showed answers</span>`;
         if (r.mode === "fill" && r.detail?.wrong?.length) res += ` <span class="muted small">${r.detail.wrong.map(w => `wrote “${esc(w.typed || "blank")}” for ${esc(w.want)}`).join("; ")}</span>`;
         if (r.mode === "fill" && r.detail?.usedBank) res += ` <span class="muted small">(used word bank)</span>`;
-        return `<tr><td>${fmtDate(r.ts?.toDate?.())}</td><td>${stepName[r.mode] || r.mode}</td><td>${item}</td><td>${res}</td></tr>`;
+        const step = r.review ? (r.mode === "fill" ? "Review · Recall" : "Review · Recognition") : (stepName[r.mode] || r.mode);
+        return `<tr><td>${fmtDate(r.ts?.toDate?.())}</td><td>${step}</td><td>${item}</td><td>${res}</td></tr>`;
       }).join("")}</tbody></table></div>` : `<p class="muted">No answers yet.</p>`;
   } catch (e) { console.error(e); box.innerHTML = `<p class="muted">Couldn't load recent answers.</p>`; }
 }
@@ -337,14 +390,14 @@ async function loadRecent(s) {
 /* ---------- CSV ---------- */
 function downloadCSV() {
   const list = filtered(), U = scopeUnits();
-  const head = ["Name", "Email", "Period", "Last active", "Got it", "Recognized", "Recognition answers", "Recognition %", "Recalled", "Recall answers", "Recall %", "Weakest topic",
+  const head = ["Name", "Email", "Period", "Last active", "Got it", "Recognized", "Recognition answers", "Recognition %", "Recalled", "Recall answers", "Recall %", "Review due now", "Review late (3+ days)", "Long-term terms (box 4+)", "Items practiced last 7 days", "Weakest topic",
     ...U.flatMap(u => [u.name + " recognition %", u.name + " recall %"]), "Recognition: struggling terms", "Recall: sentences not recalled"];
   const lines = [head];
   list.forEach(s => {
     const m = metrics(s), w = weakestUnit(s);
     const strug = scopeTerms().filter(t => { const x = s.stats[t.id]; return x && (x.a || 0) >= MIN_ITEM && pct(x.c || 0, x.a) < LOW; }).map(t => t.t).join("; ");
     const missed = scopeNotes().filter(n => { const x = s.recall[n.id]; return x && (x.a || 0) >= 1 && (x.s || 0) < RECALL_GOAL; }).length;
-    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", `${m.got}/${m.nTerms}`, `${m.recognized}/${m.nTerms}`, m.rec.a, m.recP ?? "", `${m.recalled}/${m.nNotes}`, m.rcl.a, m.rclP ?? "", w ? unitName(w.id) : "",
+    lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", `${m.got}/${m.nTerms}`, `${m.recognized}/${m.nTerms}`, m.rec.a, m.recP ?? "", `${m.recalled}/${m.nNotes}`, m.rcl.a, m.rclP ?? "", m.due, m.late, m.longTerm, m.reviewedWeek, w ? unitName(w.id) : "",
       ...U.flatMap(u => [pct(s.recogUnits[u.id]?.c || 0, s.recogUnits[u.id]?.a || 0) ?? "", pct(s.recallUnits[u.id]?.c || 0, s.recallUnits[u.id]?.a || 0) ?? ""]), strug, missed]);
   });
   const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
@@ -363,19 +416,21 @@ function makeDemo() {
   const hardN = Object.fromEntries(NOTES.map(n => [n.id, rnd() * 0.5 + 0.15]));
   return first.map((f, i) => {
     const skill = 0.35 + rnd() * 0.6, stats = {}, recall = {}, recogUnits = {}, recallUnits = {}, known = [];
+    const today = dayNum(), diligent = rnd();
+    const demoBox = x => { x.b = Math.min(5, Math.max(1, x.s + (rnd() < skill ? 1 : 0))); x.d = today + Math.floor(rnd() * (INTERVALS[x.b] + 2)) - Math.floor((1 - diligent) * 6 * rnd()); x.l = x.d - INTERVALS[x.b]; };
     const add = (map, u, ok) => { map[u] = map[u] || { a: 0, c: 0 }; map[u].a++; if (ok) map[u].c++; };
     TERMS.forEach(t => {
       if (rnd() < skill * 0.9) known.push(t.id);
       if (rnd() < 0.35) return;
       const x = { a: 0, c: 0, s: 0 }, n = 1 + Math.floor(rnd() * 5);
       for (let k = 0; k < n; k++) { const ok = rnd() < Math.min(0.97, skill + 0.4 - hard[t.id]); x.a++; if (ok) { x.c++; x.s++; } else x.s = 0; add(recogUnits, t.u, ok); }
-      stats[t.id] = x;
+      demoBox(x); stats[t.id] = x;
     });
     NOTES.forEach(nt => {
       if (rnd() < 0.5) return;
       const x = { a: 0, c: 0, s: 0 }, n = 1 + Math.floor(rnd() * 3);
       for (let k = 0; k < n; k++) { const ok = rnd() < Math.min(0.95, skill + 0.25 - hardN[nt.id]); x.a++; if (ok) { x.c++; x.s++; } else x.s = 0; add(recallUnits, nt.u, ok); }
-      recall[nt.id] = x;
+      demoBox(x); recall[nt.id] = x;
     });
     return norm({ uid: "demo" + i, name: `${f} ${last[i % 4]}`, email: `${f.toLowerCase()}.demo@example.com`, period: 1 + (i % 7),
       lastActive: new Date(Date.now() - rnd() * 12 * 864e5), stats, recall, recogUnits, recallUnits, known });

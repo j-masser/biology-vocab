@@ -5,8 +5,31 @@ import { SETS, UNITS, TERMS, NOTES } from "./data.js";
 export const RECOG_GOAL = 2;   // correct answers in a row before a term counts as recognized
 export const RECALL_GOAL = 1;  // first-check-correct completions in a row before a sentence counts as recalled
 
+// Spaced repetition (Leitner boxes). Right answer on a due item: up one box. Wrong answer: back to box 1.
+export const INTERVALS = [0, 1, 2, 4, 8, 16]; // days until the next review for boxes 1–5
+export const LONG_TERM_BOX = 4;               // box 4+ = remembered after a week or more
+export const REVIEW_SESSION = 20;             // items per Daily Review round
+export const dayNum = (date = new Date()) => Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 864e5);
+export const todayISO = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; };
+export const isOpen = u => !u.start || u.start <= todayISO();
+// Items practiced before spaced repetition existed have no box yet: their streak sets the box and they're due now.
+export const boxOf = st => !st || !st.a ? 0 : (st.b ?? Math.min(5, Math.max(1, st.s || 0)));
+export const dueDay = st => !st || !st.a ? null : (st.d ?? dayNum());
+export function updateItem(st, correct) {
+  const t = dayNum();
+  if (st.b == null && (st.a || 0) > 0) { st.b = Math.min(5, Math.max(1, st.s || 0)); st.d = t; }
+  const wasDue = st.d == null || st.d <= t;
+  st.a = (st.a || 0) + 1; if (correct) st.c = (st.c || 0) + 1; st.s = correct ? (st.s || 0) + 1 : 0;
+  if (!correct) { st.b = 1; st.d = t + 1; }
+  else if (wasDue) { st.b = Math.min(5, (st.b || 0) + 1); st.d = t + INTERVALS[st.b]; }
+  st.l = t;
+  return st;
+}
+const fmtStart = iso => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
 const PRINT_URL = "https://docs.google.com/document/d/1UZq2VV1L9wvmPuFDq2-9GFkAlkarSOsqft8QgDiD_F4/edit?usp=sharing";
 const STEPS = {
+  review: { n: 0, name: "Daily Review", sub: "Spaced repetition", desc: "Terms and sentences come back right before you'd forget them. Get one right and it waits longer next time (1, 2, 4, 8, then 16 days). Miss it and it comes back tomorrow.", next: null },
   cards: { n: 1, name: "Flashcards", sub: "Metacognition", desc: "Check what you already know. Mark “Got it” only if you could explain the term without looking.", next: "recog" },
   recog: { n: 2, name: "Recognition", sub: "Quiz and Match", desc: `Pick the right answer from the choices. A term counts as recognized after ${RECOG_GOAL} correct answers in a row.`, next: "recall" },
   recall: { n: 3, name: "Recall", sub: "Notes Fill-In", desc: "Write the missing words from memory. A sentence counts as recalled when every blank is right on the first check.", next: null }
@@ -20,14 +43,16 @@ const setOf = u => (UNITS.find(x => x.id === u) || {}).set;
 const setName = id => (SETS.find(s => s.id === id) || {}).name || "";
 
 // adapter: { get(key, fallback), set(key, value), saveKnown(term, on, state), recordRecognition(ev, state), recordRecall(ev, state) }
-export function createCore(adapter) {
+export function createCore(adapter, opts = {}) {
   const state = { known: new Set(), stats: {}, recall: {} };
   let unit = adapter.get("lv-unit", "all");
   let recogMode = adapter.get("lv-recog", "quiz");
   let mode = "cards";
   let started = false;
 
-  const inSel = u => unit === "all" || unit === u || setOf(u) === unit;
+  // Lessons with a future "start" date stay hidden from students (teachers see them, marked).
+  const openUnits = () => UNITS.filter(u => opts.preview || isOpen(u));
+  const inSel = u => openUnits().some(x => x.id === u) && (unit === "all" || unit === u || setOf(u) === unit);
   const pool = () => TERMS.filter(x => inSel(x.u));
   const notePool = () => NOTES.filter(x => inSel(x.u));
   const panel = $("#panel");
@@ -39,14 +64,18 @@ export function createCore(adapter) {
     adapter.saveKnown(term, on, state); updateMeters();
   }
   function recordRecognition(term, correct, quizMode, detail) {
-    const st = state.stats[term.id] || (state.stats[term.id] = { a: 0, c: 0, s: 0 });
-    st.a = (st.a || 0) + 1; if (correct) st.c = (st.c || 0) + 1; st.s = correct ? (st.s || 0) + 1 : 0;
-    adapter.recordRecognition({ mode: quizMode, term, correct, streak: st.s, detail: detail || null }, state); updateMeters();
+    const st = updateItem(state.stats[term.id] || (state.stats[term.id] = {}), correct);
+    adapter.recordRecognition({ mode: quizMode, term, correct, item: { ...st }, detail: detail || null }, state); updateMeters();
   }
   function recordRecall(note, correct, detail) {
-    const st = state.recall[note.id] || (state.recall[note.id] = { a: 0, c: 0, s: 0 });
-    st.a = (st.a || 0) + 1; if (correct) st.c = (st.c || 0) + 1; st.s = correct ? (st.s || 0) + 1 : 0;
-    adapter.recordRecall({ note, correct, streak: st.s, detail: detail || null }, state); updateMeters();
+    const st = updateItem(state.recall[note.id] || (state.recall[note.id] = {}), correct);
+    adapter.recordRecall({ note, correct, item: { ...st }, detail: detail || null }, state); updateMeters();
+  }
+  function dueItems() {
+    const t = dayNum();
+    const rec = pool().map(x => ({ kind: "rec", x, d: dueDay(state.stats[x.id]) })).filter(o => o.d != null && o.d <= t);
+    const rcl = notePool().map(n => ({ kind: "rcl", n, d: dueDay(state.recall[n.id]) })).filter(o => o.d != null && o.d <= t);
+    return [...rec, ...rcl];
   }
   function updateMeters() {
     const terms = pool(), notes = notePool();
@@ -54,6 +83,8 @@ export function createCore(adapter) {
     const rec = terms.filter(t => (state.stats[t.id]?.s || 0) >= RECOG_GOAL).length;
     const rcl = notes.filter(n => (state.recall[n.id]?.s || 0) >= RECALL_GOAL).length;
     const meter = (label, n, tot, cls, what) => `<div class="meter" title="${n} of ${tot} ${what}"><span>${label}</span><span class="mbar" role="img" aria-label="${label}: ${n} of ${tot} ${what}"><i class="${cls}" style="width:${tot ? n / tot * 100 : 0}%"></i></span><b>${n}/${tot}</b></div>`;
+    const due = dueItems().length, badge = $("#duebadge");
+    if (badge) { badge.textContent = due; badge.hidden = !due; }
     $("#meters").innerHTML = meter("Got it", got, terms.length, "m1", "terms marked Got it")
       + meter("Recognized", rec, terms.length, "m2", "terms recognized")
       + meter("Recalled", rcl, notes.length, "m3", "sentences recalled");
@@ -61,10 +92,11 @@ export function createCore(adapter) {
 
   /* ---------- shell ---------- */
   function renderUnits() {
-    if (!["all", ...SETS.map(s => s.id), ...UNITS.map(u => u.id)].includes(unit)) unit = "all";
+    const open = openUnits(), sets = SETS.filter(s => open.some(u => u.set === s.id));
+    if (!["all", ...sets.map(s => s.id), ...open.map(u => u.id)].includes(unit)) unit = "all";
     const chip = (id, name, cls = "") => `<button class="chip ${cls}" data-unit="${id}" aria-pressed="${id === unit}">${esc(name)}</button>`;
-    $("#units").innerHTML = chip("all", "All terms") + SETS.map(s => chip(s.id, s.name, "half")).join("")
-      + `<span class="chipsep" aria-hidden="true"></span>` + UNITS.map(u => chip(u.id, u.name)).join("");
+    $("#units").innerHTML = chip("all", "All terms") + sets.map(s => chip(s.id, s.name, "half")).join("")
+      + `<span class="chipsep" aria-hidden="true"></span>` + open.map(u => chip(u.id, isOpen(u) ? u.name : `${u.name} (opens ${fmtStart(u.start)})`, isOpen(u) ? "" : "locked")).join("");
   }
   $("#units").addEventListener("click", e => {
     const b = e.target.closest("[data-unit]"); if (!b) return;
@@ -73,10 +105,10 @@ export function createCore(adapter) {
   document.querySelector("nav.modes").addEventListener("click", e => {
     const b = e.target.closest("[data-mode]"); if (b) location.hash = b.dataset.mode;
   });
-  const MODES = ["cards", "recog", "recall", "list"];
+  const MODES = ["review", "cards", "recog", "recall", "list"];
   function readHash() {
     const h = location.hash.slice(1);
-    mode = MODES.includes(h) ? h : h === "quiz" || h === "match" ? (recogMode = h, "recog") : h === "fill" ? "recall" : "cards";
+    mode = MODES.includes(h) ? h : h === "quiz" || h === "match" ? (recogMode = h, "recog") : h === "fill" ? "recall" : (dueItems().length ? "review" : "cards");
     document.querySelectorAll("nav.modes button").forEach(b => b.setAttribute("aria-selected", b.dataset.mode === mode));
     render();
   }
@@ -86,17 +118,98 @@ export function createCore(adapter) {
     if (mode === "list") { box = panel; return List(); }
     const st = STEPS[mode];
     panel.innerHTML = `<div class="stephead">
-        <div><span class="stepnum">Step ${st.n} of 3 · ${st.sub}</span><h2>${st.name}</h2><p>${st.desc}</p></div>
+        <div><span class="stepnum">${st.n ? `Step ${st.n} of 3 · ` : ""}${st.sub}</span><h2>${st.name}</h2><p>${st.desc}</p></div>
         ${st.next ? `<a class="btn nextstep" href="#${st.next}">Next: ${STEPS[st.next].name} →</a>` : ""}
       </div>
       ${mode === "recog" ? `<div class="seg" role="group" aria-label="Recognition activity"><button data-r="quiz" aria-pressed="${recogMode === "quiz"}">Quiz</button><button data-r="match" aria-pressed="${recogMode === "match"}">Match</button></div>` : ""}
       <div id="box"></div>`;
     box = $("#box");
+    if (mode === "review") return Review();
     if (mode === "recog") {
       panel.querySelectorAll(".seg button").forEach(b => b.onclick = () => { recogMode = b.dataset.r; adapter.set("lv-recog", recogMode); render(); });
       return recogMode === "match" ? Match() : Quiz();
     }
     mode === "cards" ? Cards() : Fill();
+  }
+
+  /* ---------- Daily Review (spaced repetition) ---------- */
+  let rv;
+  function Review() {
+    const due = dueItems().sort((a, b) => a.d - b.d);
+    const practiced = pool().some(x => state.stats[x.id]?.a) || notePool().some(n => state.recall[n.id]?.a);
+    const longTerm = pool().filter(x => boxOf(state.stats[x.id]) >= LONG_TERM_BOX).length;
+    if (!due.length) {
+      const t = dayNum(), all = [...pool().map(x => dueDay(state.stats[x.id])), ...notePool().map(n => dueDay(state.recall[n.id]))].filter(d => d != null);
+      const tomorrow = all.filter(d => d === t + 1).length, next = all.length ? Math.min(...all) : null;
+      box.innerHTML = practiced
+        ? `<h3 style="font-family:var(--display);font-size:24px;margin:0 0 6px">You're all caught up.</h3>
+           <p class="muted">${tomorrow ? `${tomorrow} item${tomorrow === 1 ? "" : "s"} come back tomorrow.` : next ? `Your next review is in ${next - t} days.` : ""} ${longTerm} term${longTerm === 1 ? " is" : "s are"} in long-term memory (box ${LONG_TERM_BOX} or higher).</p>
+           <div class="row"><a class="btn primary" href="#cards">Keep studying: Step 1 Flashcards</a><a class="btn" href="#recog">Step 2 Recognition</a></div>`
+        : `<h3 style="font-family:var(--display);font-size:24px;margin:0 0 6px">Nothing to review yet.</h3>
+           <p class="muted">Start the study path. Terms you answer in Recognition and sentences you try in Recall come back here when they're due.</p>
+           <a class="btn primary" href="#cards">Start with Step 1 Flashcards</a>`;
+      return;
+    }
+    rv = { items: shuffle(due.slice(0, REVIEW_SESSION)), total: due.length, i: 0, right: 0, missed: [] };
+    drawReview();
+  }
+  function boxStrip() {
+    const counts = [1, 2, 3, 4, 5].map(b => pool().filter(x => boxOf(state.stats[x.id]) === b).length + notePool().filter(n => boxOf(state.recall[n.id]) === b).length);
+    return `<div class="boxes" aria-label="Items in each review box">${counts.map((n, k) => `<span class="bx b${k + 1}"><b>${n}</b>Box ${k + 1}<small>${INTERVALS[k + 1]} day${k ? "s" : ""}</small></span>`).join("")}</div>`;
+  }
+  function drawReview() {
+    const { items, i } = rv;
+    if (i >= items.length) {
+      const left = dueItems().length;
+      box.innerHTML = `<div class="row" style="gap:20px;align-items:end"><div class="score">${rv.right}/${items.length}</div><div class="muted">correct this round.${left ? ` ${left} more item${left === 1 ? " is" : "s are"} due.` : " You're caught up for today."}</div></div>
+        ${rv.missed.length ? `<h3 style="font-family:var(--display);margin-top:22px">These come back tomorrow</h3><ul class="missed">${rv.missed.map(m => `<li>${m}</li>`).join("")}</ul>` : ""}
+        ${boxStrip()}
+        <div class="row" style="margin-top:16px">${left ? `<button class="btn primary" id="more">Review ${Math.min(left, REVIEW_SESSION)} more</button>` : ""}<a class="btn${left ? "" : " primary"}" href="#cards">Back to the study path</a></div>`;
+      const more = $("#more"); if (more) more.onclick = Review;
+      return;
+    }
+    const it = items[i];
+    const head = `<div class="row spread small"><span class="muted" style="font-variant-numeric:tabular-nums">Review ${i + 1} of ${items.length}${rv.total > items.length ? ` (${rv.total} due)` : ""}</span><span class="row" style="gap:6px"><span class="tag">${esc(unitName(it.kind === "rec" ? it.x.u : it.n.u))}</span><span class="tag ${it.kind === "rec" ? "rectag" : "rcltag"}">${it.kind === "rec" ? "Recognition" : "Recall"}</span></span></div>`;
+    const next = () => { rv.i++; drawReview(); };
+    if (it.kind === "rec") {
+      const x = it.x, dir = Math.random() < .5 ? "def" : "term";
+      const same = TERMS.filter(o => o.id !== x.id && o.u === x.u), other = TERMS.filter(o => o.id !== x.id && o.u !== x.u);
+      const opts = shuffle([x, ...[...shuffle(same), ...shuffle(other)].slice(0, 3)]);
+      const prompt = dir === "def" ? `What does <b>${esc(x.t)}</b> mean?` : `Which term matches this definition?<br><span style="font-size:18px">“${esc(x.d)}”</span>`;
+      box.innerHTML = `${head}<div class="q">${prompt}</div><div class="opts">${opts.map((o, k) => `<button class="opt" data-k="${k}">${esc(dir === "def" ? o.d : o.t)}</button>`).join("")}</div><div class="feedback" id="fb"></div>`;
+      box.querySelectorAll(".opt").forEach(b => b.onclick = () => {
+        const pick = opts[+b.dataset.k], ok = pick === x;
+        box.querySelectorAll(".opt").forEach(o => { o.disabled = true; if (opts[+o.dataset.k] === x) o.classList.add("right"); });
+        if (ok) rv.right++; else { b.classList.add("wrong"); rv.missed.push(`<b>${esc(x.t)}</b>: ${esc(x.d)}`); }
+        recordRecognition(x, ok, "quiz", { dir, picked: pick.id, review: true });
+        const st = state.stats[x.id];
+        $("#fb").innerHTML = `<div class="row spread"><span style="color:var(${ok ? "--good" : "--bad"});font-weight:700">${ok ? `Correct! Back in ${INTERVALS[st.b]} day${st.b > 1 ? "s" : ""}.` : "Not quite. It comes back tomorrow."}</span><button class="btn primary" id="nx">Next →</button></div>`;
+        $("#nx").onclick = next; $("#nx").focus();
+      });
+    } else {
+      const n = it.n, answers = [];
+      const html = esc(n.s).replace(/\[([^\]]+)\]/g, (m, w) => { answers.push(w); const k = answers.length - 1; return `<input class="blank" data-k="${k}" aria-label="Blank ${k + 1}" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:${Math.max(5, w.length + 2)}ch">`; });
+      let bank = false;
+      box.innerHTML = `${head}<div class="sentence">${html}</div>
+        <div class="row"><button class="btn primary" id="chk">Check</button><button class="btn" id="bk">Show word bank</button></div>
+        <div class="bank" id="bank" hidden>${shuffle(answers).map(w => `<span>${esc(w)}</span>`).join("")}</div><div class="feedback" id="fb"></div>`;
+      const inputs = [...box.querySelectorAll(".blank")];
+      const norm = s => s.trim().toLowerCase().replace(/[%’']/g, "");
+      inputs.forEach(inp => inp.addEventListener("keydown", e => { if (e.key === "Enter") $("#chk").click(); }));
+      $("#bk").onclick = () => { bank = !bank; $("#bank").hidden = !bank; $("#bk").textContent = (bank ? "Hide" : "Show") + " word bank"; };
+      $("#chk").onclick = () => {
+        const wrong = [];
+        inputs.forEach(inp => { const want = answers[+inp.dataset.k], ok = norm(inp.value) === norm(want); inp.classList.toggle("ok", ok); inp.classList.toggle("no", !ok); inp.disabled = true; if (!ok) wrong.push({ want, typed: inp.value.trim().slice(0, 40) }); });
+        const ok = !wrong.length;
+        if (ok) rv.right++; else rv.missed.push(esc(n.s.replace(/\[([^\]]+)\]/g, "$1")));
+        recordRecall(n, ok, { wrong, usedBank: bank, review: true });
+        const st = state.recall[n.id];
+        $("#chk").remove(); $("#bk").remove();
+        $("#fb").innerHTML = `<div class="row spread"><span style="color:var(${ok ? "--good" : "--bad"});font-weight:700">${ok ? `All correct! Back in ${INTERVALS[st.b]} day${st.b > 1 ? "s" : ""}.` : `Answer: ${answers.map(esc).join(", ")}. It comes back tomorrow.`}</span><button class="btn primary" id="nx">Next →</button></div>`;
+        $("#nx").onclick = next; $("#nx").focus();
+      };
+      inputs[0] && inputs[0].focus({ preventScroll: true });
+    }
   }
 
   /* ---------- Step 1: Flashcards ---------- */

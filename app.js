@@ -38,21 +38,22 @@ const adapter = {
       { mode: "cards", stage: "metacognition", termId: term.id, unit: term.u, correct: on, detail: { selfReport: on ? "got_it" : "still_learning" } });
   },
   // Step 2: quiz + match
-  recordRecognition({ mode, term, correct, streak, detail }) {
-    const F = fb.F, inc = F.increment(1), id = term.id, u = term.u;
-    const upd = { [`counts.${mode}`]: inc, [`stats.${id}.a`]: inc, [`stats.${id}.s`]: streak, [`recogUnits.${u}.a`]: inc };
-    if (correct) { upd[`stats.${id}.c`] = inc; upd[`recogUnits.${u}.c`] = inc; }
-    save(upd, { mode, stage: "recognition", termId: id, unit: u, correct, detail });
+  // item = {a, c, s, b (review box), d (next review day), l (last review day)}
+  recordRecognition({ mode, term, correct, item, detail }) {
+    const F = fb.F, inc = F.increment(1), id = term.id, u = term.u, review = !!detail?.review;
+    const upd = { [review ? "counts.review" : `counts.${mode}`]: inc, [`stats.${id}`]: item, [`recogUnits.${u}.a`]: inc };
+    if (correct) upd[`recogUnits.${u}.c`] = inc;
+    save(upd, { mode, stage: "recognition", review, termId: id, unit: u, correct, detail });
   },
   // Step 3: notes fill-in
-  recordRecall({ note, correct, streak, detail }) {
-    const F = fb.F, inc = F.increment(1), id = note.id, u = note.u;
-    const upd = { "counts.fill": inc, [`recall.${id}.a`]: inc, [`recall.${id}.s`]: streak, [`recallUnits.${u}.a`]: inc };
-    if (correct) { upd[`recall.${id}.c`] = inc; upd[`recallUnits.${u}.c`] = inc; }
-    save(upd, { mode: "fill", stage: "recall", noteId: id, unit: u, correct, detail });
+  recordRecall({ note, correct, item, detail }) {
+    const F = fb.F, inc = F.increment(1), id = note.id, u = note.u, review = !!detail?.review;
+    const upd = { [review ? "counts.review" : "counts.fill"]: inc, [`recall.${id}`]: item, [`recallUnits.${u}.a`]: inc };
+    if (correct) upd[`recallUnits.${u}.c`] = inc;
+    save(upd, { mode: "fill", stage: "recall", review, noteId: id, unit: u, correct, detail });
   }
 };
-const core = createCore(adapter);
+let core = null;
 
 /* ---------- screens ---------- */
 function showGate(html) { gate.innerHTML = html; gate.hidden = false; $("#app").hidden = true; $("#meters").innerHTML = ""; }
@@ -149,6 +150,7 @@ function start(user, data) {
   profile = { uid: user.uid, name: data.name || user.displayName || user.email, email: user.email, period: data.period };
   renderWho(user);
   showApp();
+  if (!core) core = createCore(adapter, { preview: isTeacherEmail(user.email) });
   core.start({ known: data.known || [], stats: data.stats || {}, recall: data.recall || {} });
   fb.F.updateDoc(uref, { lastActive: fb.F.serverTimestamp() }).catch(() => {});
 }

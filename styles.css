@@ -221,3 +221,29 @@ table.topics td{vertical-align:middle}
 .tcell{display:grid;grid-template-columns:minmax(80px,1fr) 6.5rem;gap:10px;align-items:center}
 .tcell span{font-size:13px;color:var(--muted);white-space:nowrap}
 .tcell span b{color:var(--ink)}
+
+/* Daily Review (spaced repetition) */
+.duebadge{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:99px;background:var(--bad);color:#fff;font-size:12px;font-weight:800;margin-left:6px;vertical-align:1px}
+nav.modes button[data-mode="review"]{font-weight:800}
+.tag.rcltag{background:var(--pen-soft);color:var(--pen)}
+.chip.locked{border-style:dashed;opacity:.75}
+.boxes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:18px}
+.bx{display:flex;flex-direction:column;align-items:center;padding:10px 4px;border-radius:12px;background:var(--bg);border:2px solid var(--line);font-size:13px;font-weight:700;text-align:center}
+.bx b{font:800 24px/1.1 var(--display);font-variant-numeric:tabular-nums}
+.bx small{font-weight:400;color:var(--muted)}
+.bx.b1{border-color:var(--bad)} .bx.b2{border-color:var(--gold)} .bx.b3{border-color:#A6C532} .bx.b4,.bx.b5{border-color:var(--good)}
+
+/* Dashboard: review box bars */
+.boxrow{display:grid;grid-template-columns:minmax(0,8rem) minmax(0,1fr) 11rem;gap:12px;align-items:center;font-size:14px}
+.boxrow .lbl{font-weight:700}
+.boxrow .val{color:var(--muted);font-variant-numeric:tabular-nums}
+.stack{display:flex;height:18px;border-radius:99px;overflow:hidden;background:var(--line);gap:2px}
+.stack i{display:block;height:100%}
+.bx3{background:#A6C532} .bx4{background:var(--pen)} .ns{background:var(--line)}
+.stack .ns{background:transparent}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
+@media (max-width:560px){.boxrow{grid-template-columns:minmax(0,1fr) auto}.boxrow .stack{grid-column:1/-1;order:3}}
+[hidden]{display:none!important}
+a.btn{text-decoration:none;display:inline-flex;align-items:center}

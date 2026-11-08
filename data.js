@@ -9,7 +9,8 @@ export const SETS = [
  {"id": "lions2", "name": "Lions 2nd half"}
 ];
 
-// Lessons (shown as topic buttons).
+// Lessons (shown as topic buttons). Add "start": "YYYY-MM-DD" to keep a lesson hidden from students until that date,
+// for example {"id": "organelles", "name": "Organelles", "set": "cells1", "start": "2027-01-11"}.
 export const UNITS = [
  {
   "id": "group",

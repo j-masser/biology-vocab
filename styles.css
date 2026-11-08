@@ -247,3 +247,19 @@ nav.modes button[data-mode="review"]{font-weight:800}
 @media (max-width:560px){.boxrow{grid-template-columns:minmax(0,1fr) auto}.boxrow .stack{grid-column:1/-1;order:3}}
 [hidden]{display:none!important}
 a.btn{text-decoration:none;display:inline-flex;align-items:center}
+
+/* Compact header: title left, account + meters right; nothing changes height while saving */
+header{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,360px);align-items:center;gap:10px 28px;padding:16px 22px}
+header h1{font-size:clamp(26px,4.5vw,38px)}
+header .progress{text-align:right;min-width:0}
+.who{gap:4px 8px;font-size:13px;margin-bottom:8px}
+.linkbtn{padding:3px 9px;font-size:12px}
+.savestate{width:auto;min-width:9.5em;min-height:1.2em;line-height:1.2em;display:inline-block;text-align:right}
+.meters{gap:4px;margin-top:0;min-width:0}
+.meter{font-size:12px;grid-template-columns:5.6rem minmax(60px,1fr) 3.2rem}
+@media (max-width:720px){
+  header{grid-template-columns:1fr;gap:8px;padding:14px 16px}
+  header .progress{text-align:left}
+  .who{justify-content:flex-start}
+  .savestate{text-align:left}
+}

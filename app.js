@@ -98,10 +98,11 @@ function showPeriodPicker(user, picked, error) {
 function renderWho(user) {
   const who = $("#who");
   if (!user || !profile) { who.innerHTML = ""; return; }
+  // Row 1: name, teacher link, Sign out (far right). Row 2: save status, always taking the same space.
   who.innerHTML = `<span><b>${esc(profile.name)}</b> · Period ${profile.period}</span>
     ${isTeacherEmail(user.email) ? `<a class="linkbtn" href="dashboard.html">Teacher dashboard</a>` : ""}
     <button class="linkbtn" id="signout">Sign out</button>
-    <span class="savestate" id="savestate"></span>`;
+    <span class="savestate" id="savestate" aria-live="polite"></span>`;
   $("#signout").onclick = () => fb.A.signOut(fb.auth);
 }
 

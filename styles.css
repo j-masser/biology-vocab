@@ -263,3 +263,15 @@ header .progress{text-align:right;min-width:0}
   .who{justify-content:flex-start}
   .savestate{text-align:left}
 }
+
+/* Account row: Sign out in the top-right corner, save status on its own line underneath */
+.who{flex-wrap:wrap;justify-content:flex-end;align-items:center}
+.who .savestate{flex-basis:100%;width:100%;min-width:0;text-align:right;margin-top:2px}
+@media (max-width:720px){.who .savestate{text-align:left}}
+.who{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:4px 8px}
+.who > span:first-child{grid-column:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.who > a.linkbtn{grid-column:2;white-space:nowrap}
+.who #signout{grid-column:3;white-space:nowrap}
+.who .savestate{grid-column:1 / -1}
+header{grid-template-columns:minmax(0,1fr) minmax(300px,420px)}
+@media (max-width:720px){header{grid-template-columns:1fr}.who > span:first-child{text-align:left}}

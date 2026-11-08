@@ -87,14 +87,15 @@ const setName = id => (SETS.find(s => s.id === id) || {}).name || "";
 // adapter: { get(key, fallback), set(key, value), saveKnown(term, on, state), recordRecognition(ev, state), recordRecall(ev, state) }
 export function createCore(adapter, opts = {}) {
   const state = { known: new Set(), stats: {}, recall: {} };
-  let unit = adapter.get("lv-unit", "all");
+  // Two-level filter: a unit button (Lions 1st half, Elephants, ...) and a lesson dropdown inside it.
+  let setSel = adapter.get("lv-set", "all"), lessonSel = adapter.get("lv-lesson", "all");
   let recogMode = adapter.get("lv-recog", "quiz");
   let mode = "cards";
   let started = false;
 
   // Lessons with a future "start" date stay hidden from students (teachers see them, marked).
   const openUnits = () => UNITS.filter(u => opts.preview || isOpen(u));
-  const inSel = u => openUnits().some(x => x.id === u) && (unit === "all" || unit === u || setOf(u) === unit);
+  const inSel = u => openUnits().some(x => x.id === u) && (setSel === "all" || setOf(u) === setSel) && (lessonSel === "all" || lessonSel === u);
   const pool = () => TERMS.filter(x => inSel(x.u));
   const notePool = () => NOTES.filter(x => inSel(x.u));
   const panel = $("#panel");
@@ -134,15 +135,28 @@ export function createCore(adapter, opts = {}) {
 
   /* ---------- shell ---------- */
   function renderUnits() {
-    const open = openUnits(), sets = SETS.filter(s => open.some(u => u.set === s.id));
-    if (!["all", ...sets.map(s => s.id), ...open.map(u => u.id)].includes(unit)) unit = "all";
-    const chip = (id, name, cls = "") => `<button class="chip ${cls}" data-unit="${id}" aria-pressed="${id === unit}">${esc(name)}</button>`;
-    $("#units").innerHTML = chip("all", "All terms") + sets.map(s => chip(s.id, s.name, "half")).join("")
-      + `<span class="chipsep" aria-hidden="true"></span>` + open.map(u => chip(u.id, isOpen(u) ? u.name : `${u.name} (${opensLabel(u)})`, isOpen(u) ? "" : "locked")).join("");
+    const open = openUnits(), usable = s => open.some(u => u.set === s.id);
+    if (setSel !== "all" && !SETS.some(s => s.id === setSel && usable(s))) setSel = "all";
+    const lessons = open.filter(u => setSel === "all" || u.set === setSel);
+    if (lessonSel !== "all" && !lessons.some(u => u.id === lessonSel)) lessonSel = "all";
+    // Every unit gets a button. Units with no open lessons yet show "Soon" and can't be picked (teachers can preview them).
+    const chip = s => {
+      const ok = s === "all" || usable(s), id = s === "all" ? "all" : s.id, name = s === "all" ? "All units" : s.name;
+      return `<button class="chip${s === "all" ? "" : " half"}${ok ? "" : " soon"}" data-set="${id}" aria-pressed="${id === setSel}" ${ok ? "" : `disabled title="Opens when your class starts this unit"`}>${esc(name)}${ok ? "" : ` <small>Soon</small>`}</button>`;
+    };
+    const label = u => esc(u.name) + (isOpen(u) ? "" : ` (${opensLabel(u)})`);
+    const options = setSel === "all"
+      ? SETS.filter(usable).map(s => `<optgroup label="${esc(s.name)}">${open.filter(u => u.set === s.id).map(u => `<option value="${u.id}" ${u.id === lessonSel ? "selected" : ""}>${label(u)}</option>`).join("")}</optgroup>`).join("")
+      : lessons.map(u => `<option value="${u.id}" ${u.id === lessonSel ? "selected" : ""}>${label(u)}</option>`).join("");
+    const curName = setSel === "all" ? "all units" : (SETS.find(s => s.id === setSel) || {}).name;
+    $("#units").innerHTML = `<div class="unitrow" role="group" aria-label="Unit">${chip("all")}${SETS.map(chip).join("")}</div>
+      <label class="lessonpick" for="lessonSel"><span>Lesson</span>
+        <select id="lessonSel"><option value="all" ${lessonSel === "all" ? "selected" : ""}>All lessons in ${esc(curName)}</option>${options}</select></label>`;
+    $("#lessonSel").onchange = e => { lessonSel = e.target.value; adapter.set("lv-lesson", lessonSel); updateMeters(); render(); };
   }
   $("#units").addEventListener("click", e => {
-    const b = e.target.closest("[data-unit]"); if (!b) return;
-    unit = b.dataset.unit; adapter.set("lv-unit", unit); renderUnits(); updateMeters(); render();
+    const b = e.target.closest("[data-set]"); if (!b || b.disabled) return;
+    setSel = b.dataset.set; lessonSel = "all"; adapter.set("lv-set", setSel); adapter.set("lv-lesson", "all"); renderUnits(); updateMeters(); render();
   });
   document.querySelector("nav.modes").addEventListener("click", e => {
     const b = e.target.closest("[data-mode]"); if (b) location.hash = b.dataset.mode;

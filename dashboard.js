@@ -27,7 +27,7 @@ const scopeUnits = () => UNITS.filter(u => isOpen(u) && (scope === "all" || u.se
 const scopeIds = () => new Set(scopeUnits().map(u => u.id));
 const scopeTerms = () => { const ids = scopeIds(); return TERMS.filter(t => ids.has(t.u)); };
 const scopeNotes = () => { const ids = scopeIds(); return NOTES.filter(n => ids.has(n.u)); };
-const scopeName = () => scope === "all" ? "all terms" : (SETS.find(x => x.id === scope) || {}).name;
+const scopeName = () => scope === "all" ? "all units" : (SETS.find(x => x.id === scope) || {}).name;
 const filtered = () => period === "all" ? students : students.filter(s => s.period === +period);
 
 const pct = (c, a) => a ? Math.round(c / a * 100) : null;
@@ -135,7 +135,7 @@ function startApp() {
   if (!wired) {
     wired = true;
     $("#periods").addEventListener("click", e => { const b = e.target.closest("[data-p]"); if (!b) return; period = b.dataset.p; selUid = null; render(); });
-    $("#scopes").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (!b) return; scope = b.dataset.s; render(); });
+    $("#scopes").addEventListener("click", e => { const b = e.target.closest("[data-s]"); if (!b || b.disabled) return; scope = b.dataset.s; render(); });
     document.querySelector("nav.modes").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (!b) return; view = b.dataset.view; selUid = null; render(); });
     $("#refresh").onclick = () => DEMO ? render() : load();
     $("#csv").onclick = downloadCSV;
@@ -150,8 +150,9 @@ function render() {
     .map(([v, l]) => `<button class="chip" data-p="${v}" aria-pressed="${period === v}">${l}</button>`).join("");
   const openSets = SETS.filter(x => UNITS.some(u => u.set === x.id && isOpen(u)));
   if (scope !== "all" && !openSets.some(x => x.id === scope)) scope = "all";
-  $("#scopes").innerHTML = [["all", "All terms"], ...openSets.map(x => [x.id, x.name])]
-    .map(([v, l]) => `<button class="chip${v === "all" ? "" : " half"}" data-s="${v}" aria-pressed="${scope === v}">${esc(l)}</button>`).join("");
+  $("#scopes").innerHTML = [["all", "All units"], ...SETS.map(x => [x.id, x.name])]
+    .map(([v, l]) => { const ok = v === "all" || openSets.some(x => x.id === v);
+      return `<button class="chip${v === "all" ? "" : " half"}${ok ? "" : " soon"}" data-s="${v}" aria-pressed="${scope === v}" ${ok ? "" : `disabled title="No lessons have opened yet"`}>${esc(l)}${ok ? "" : " <small>Soon</small>"}</button>`; }).join("");
   document.querySelectorAll("nav.modes button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
   if (selUid) return renderStudent(students.find(s => s.uid === selUid));
   view === "class" ? renderClass() : renderStudents();

@@ -275,3 +275,12 @@ header .progress{text-align:right;min-width:0}
 .who .savestate{grid-column:1 / -1}
 header{grid-template-columns:minmax(0,1fr) minmax(300px,420px)}
 @media (max-width:720px){header{grid-template-columns:1fr}.who > span:first-child{text-align:left}}
+
+/* Unit buttons + lesson dropdown (replaces the long row of lesson buttons) */
+#units{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px}
+.unitrow{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.chip.soon{opacity:.55;cursor:not-allowed;border-style:dashed}
+.chip.soon small{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-left:4px}
+.lessonpick{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:700;min-width:0;max-width:100%}
+.lessonpick select{font:600 15px var(--body);padding:8px 34px 8px 12px;border-radius:10px;border:2px solid var(--band);background:var(--surface);color:var(--ink);max-width:100%;min-width:0;cursor:pointer}
+@media (max-width:640px){.lessonpick{width:100%}.lessonpick select{flex:1}}

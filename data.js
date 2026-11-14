@@ -167,7 +167,6 @@ export const TERMS = [
   // ---------- Elephants ----------
   {"id": "population", "t": "Population", "u": "el_pop", "also": ["ot_eco"], "d": "A group of organisms that belong to the same species, living in the same area at the same time.", "ex": "The elephants of the Tsavo region; a herd of gazelle"},
   {"id": "density", "t": "Density", "u": "el_pop", "d": "Population density: the number of individuals in a defined area (for example, per 1 km² or 100 km²). It measures how closely packed the individuals of a population are.", "ex": "Many snails in one small patch = high density"},
-  {"id": "dispersion", "t": "Dispersion", "u": "el_pop", "d": "The pattern of distribution of the individuals of a population. The three patterns are clumped, uniform and random.", "ex": "Clumped: otters and lions. Uniform: saguaro cacti. Random: dandelions"},
   {"id": "limiting_factor", "t": "Limiting factor", "u": "el_pop", "d": "A factor in a population's environment that limits the population size, i.e. limits growth. Limiting factors can be biotic or abiotic.", "ex": "Food, water, disease, predators"},
   {"id": "density_independent_limiting_factor", "t": "Density-independent limiting factor", "u": "el_pop", "d": "A limiting factor that affects a population regardless of its density. These are usually abiotic factors.", "ex": "Natural disasters, severe weather, pollution, human activity"},
   {"id": "density_dependent_limiting_factor", "t": "Density-dependent limiting factor", "u": "el_pop", "d": "A limiting factor that affects population size differently depending on its density. These are usually biotic factors.", "ex": "Spread of disease and parasites, competition, predation"},
@@ -344,7 +343,6 @@ export const NOTES = [
   {"id":"n65","u":"el_pop","s":"[Larger] populations are more resilient to environmental [change]. Smaller populations are more at [risk] of inbreeding, genetic [mutations] and genetic drift."},
   {"id":"n66","u":"el_pop","s":"Population density is a broad measure of how [closely] packed individuals of a population are."},
   {"id":"n67","u":"el_pop","s":"Animals in a high density population are more likely to encounter a [mate] and successfully [reproduce]. However, infectious diseases can [spread] more rapidly in a high density population."},
-  {"id":"n68","u":"el_pop","s":"Population dispersion patterns give us more information about how species [behave] and how distribution and abundance of environmental [resources] can affect them."},
   {"id":"n69","u":"el_pop","s":"Biotic factors are the [living] factors in an [ecosystem]. Abiotic factors are the [nonliving] factors in an ecosystem."},
   {"id":"n70","u":"el_pop","s":"Dead organisms were once [living] things, so we say they are biotic. Abiotic factors were [never] alive."},
   {"id":"n71","u":"el_pop","s":"Limiting factors are factors in a population's [environment] that limit the population [size], i.e. limit growth."},

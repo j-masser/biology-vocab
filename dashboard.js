@@ -1,7 +1,7 @@
 // Biology Vocab teacher dashboard. Tracks the three study-path steps separately:
 // Flashcards (self-reported "Got it"), Recognition (quiz + match) and Recall (notes fill-in).
 import * as Core from "./core.js";
-import { RECOG_GOAL, RECALL_GOAL, INTERVALS, LONG_TERM_BOX, dayNum, isOpen, opensLabel, boxOf, dueDay, loadData, dataErrorHTML, problemsHTML } from "./core.js";
+import { RECOG_GOAL, RECALL_GOAL, INTERVALS, LONG_TERM_BOX, dayNum, isOpen, opensLabel, boxOf, dueDay, loadData, dataErrorHTML, problemsHTML, lessonsOf } from "./core.js";
 import { loadFirebase, configured, isTeacherEmail, SCHOOL_DOMAIN, GOOGLE_ICON } from "./fb.js";
 
 const $ = s => document.querySelector(s);
@@ -25,7 +25,11 @@ let fb = null, students = [], period = "all", scope = "all", view = "class", sel
 // Only lessons that have opened (no "start" date, or a start date that has passed) count on the dashboard.
 const scopeUnits = () => UNITS.filter(u => isOpen(u) && (scope === "all" || u.set === scope));
 const scopeIds = () => new Set(scopeUnits().map(u => u.id));
-const scopeTerms = () => { const ids = scopeIds(); return TERMS.filter(t => ids.has(t.u)); };
+const scopeTerms = () => { const ids = scopeIds(); return TERMS.filter(t => lessonsOf(t).some(u => ids.has(u))); };
+// Recognition totals come from each term's saved answers, so a word shared by several units counts in each of them.
+const recogOf = (s, terms) => terms.reduce((acc, t) => { const x = s.stats[t.id] || {}; return { a: acc.a + (x.a || 0), c: acc.c + (x.c || 0) }; }, { a: 0, c: 0 });
+const recogFor = (s, unitId) => recogOf(s, TERMS.filter(t => lessonsOf(t).includes(unitId)));
+const shownLesson = t => lessonsOf(t).find(u => scopeIds().has(u)) || t.u;
 const scopeNotes = () => { const ids = scopeIds(); return NOTES.filter(n => ids.has(n.u)); };
 const scopeName = () => scope === "all" ? "all units" : (SETS.find(x => x.id === scope) || {}).name;
 const filtered = () => period === "all" ? students : students.filter(s => s.period === +period);
@@ -36,7 +40,7 @@ const sumOver = (map) => scopeUnits().reduce((t, u) => { const x = map[u.id] || 
 
 function metrics(s) {
   const terms = scopeTerms(), notes = scopeNotes();
-  const rec = sumOver(s.recogUnits), rcl = sumOver(s.recallUnits), t = dayNum();
+  const rec = recogOf(s, terms), rcl = sumOver(s.recallUnits), t = dayNum();
   const recItems = terms.map(x => s.stats[x.id]), rclItems = notes.map(n => s.recall[n.id]);
   const isDue = st => { const d = dueDay(st); return d != null && d <= t; };
   const isLate = st => { const d = dueDay(st); return d != null && d <= t - 3; };
@@ -63,7 +67,7 @@ const needsSupport = m => (m.rec.a >= MIN_STAGE && m.recP < LOW) || (m.rcl.a >= 
 function weakestUnit(s) {
   let w = null;
   for (const u of scopeUnits()) {
-    const a = (s.recogUnits[u.id]?.a || 0) + (s.recallUnits[u.id]?.a || 0), c = (s.recogUnits[u.id]?.c || 0) + (s.recallUnits[u.id]?.c || 0);
+    const r = recogFor(s, u.id), a = r.a + (s.recallUnits[u.id]?.a || 0), c = r.c + (s.recallUnits[u.id]?.c || 0);
     if (a < 3) continue; const p = pct(c, a); if (!w || p < w.p) w = { id: u.id, p };
   }
   return w;
@@ -243,13 +247,13 @@ function renderClass() {
     </div>
 
     <div class="section"><h2>Accuracy by topic</h2><p class="sub">Recognition is choosing the right answer. Recall is writing it from memory.</p>
-      ${topicTable(unitSum("recogUnits"), unitSum("recallUnits"))}</div>
+      ${topicTable(id => list.reduce((t, s) => { const r = recogFor(s, id); return { a: t.a + r.a, c: t.c + r.c }; }, { a: 0, c: 0 }), unitSum("recallUnits"))}</div>
 
     <div class="section">
       <h2>Recognition: terms the class struggles with</h2>
       <p class="sub">Quiz and match answers, lowest accuracy first. Terms with at least ${MIN_CLASS_ITEM} answers and below ${HIGH}% correct.</p>
       ${hard.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Topic</th><th>Correct</th><th>Answers</th><th>Students struggling</th><th>Said “Got it” but missing it</th></tr></thead><tbody>
-        ${hard.map(x => `<tr><td><b>${esc(x.t.t)}</b></td><td>${esc(unitName(x.t.u))}</td><td><span class="pill ${lvl(x.p)}">${x.p}%</span></td><td>${x.a}</td><td>${x.strug.length} <span class="muted small">${names(x.strug)}</span></td><td>${x.gotMiss.length || "—"}</td></tr>`).join("")}
+        ${hard.map(x => `<tr><td><b>${esc(x.t.t)}</b></td><td>${esc(unitName(shownLesson(x.t)))}</td><td><span class="pill ${lvl(x.p)}">${x.p}%</span></td><td>${x.a}</td><td>${x.strug.length} <span class="muted small">${names(x.strug)}</span></td><td>${x.gotMiss.length || "—"}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="panel empty">No trouble spots yet. Terms appear here once students have answered them a few times.</div>`}
     </div>
 
@@ -340,7 +344,7 @@ function renderStudent(s) {
       <div class="bars" style="margin-top:14px">${boxBar("Recognition", m.recBoxes, m.nTerms, "terms")}${boxBar("Recall", m.rclBoxes, m.nNotes, "sentences")}</div>
       ${boxLegend()}
     </div>
-    <div class="section"><h2>Accuracy by topic</h2>${topicTable(id => s.recogUnits[id] || { a: 0, c: 0 }, id => s.recallUnits[id] || { a: 0, c: 0 })}</div>
+    <div class="section"><h2>Accuracy by topic</h2>${topicTable(id => recogFor(s, id), id => s.recallUnits[id] || { a: 0, c: 0 })}</div>
     <div class="two">
       <div class="section"><h2>Recognition: struggling with</h2><p class="sub">Below ${LOW}% correct in quiz and match, at least ${MIN_ITEM} answers.</p>
         ${strug.length ? `<div class="tablewrap"><table class="data"><thead><tr><th>Term</th><th>Correct</th><th>Answers</th></tr></thead><tbody>${strug.map(r => `<tr><td><b>${esc(r.t.t)}</b> <span class="muted small">${esc(unitName(r.t.u))}</span>${s.known.includes(r.t.id) ? ` <span class="pill mid">said “Got it”</span>` : ""}</td><td><span class="pill bad">${r.p}%</span></td><td>${r.a}</td></tr>`).join("")}</tbody></table></div>` : `<div class="panel empty">Nothing yet.</div>`}
@@ -407,7 +411,7 @@ function downloadCSV() {
     const strug = scopeTerms().filter(t => { const x = s.stats[t.id]; return x && (x.a || 0) >= MIN_ITEM && pct(x.c || 0, x.a) < LOW; }).map(t => t.t).join("; ");
     const missed = scopeNotes().filter(n => { const x = s.recall[n.id]; return x && (x.a || 0) >= 1 && (x.s || 0) < RECALL_GOAL; }).length;
     lines.push([s.name, s.email, s.period, s.lastActive ? s.lastActive.toISOString() : "", `${m.got}/${m.nTerms}`, `${m.recognized}/${m.nTerms}`, m.rec.a, m.recP ?? "", `${m.recalled}/${m.nNotes}`, m.rcl.a, m.rclP ?? "", m.due, m.late, m.longTerm, m.reviewedWeek, w ? unitName(w.id) : "",
-      ...U.flatMap(u => [pct(s.recogUnits[u.id]?.c || 0, s.recogUnits[u.id]?.a || 0) ?? "", pct(s.recallUnits[u.id]?.c || 0, s.recallUnits[u.id]?.a || 0) ?? ""]), strug, missed]);
+      ...U.flatMap(u => [(r => pct(r.c, r.a) ?? "")(recogFor(s, u.id)), pct(s.recallUnits[u.id]?.c || 0, s.recallUnits[u.id]?.a || 0) ?? ""]), strug, missed]);
   });
   const csv = lines.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
   const a = document.createElement("a");

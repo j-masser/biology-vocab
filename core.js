@@ -18,6 +18,22 @@ export const dataErrorHTML = err => `<h2>The word list has a mistake</h2>
   <p>The site couldn't read <b>data.js</b>, so it can't start. This usually means a missing comma, quote mark or bracket in the most recent edit.</p>
   <p><b>Teachers:</b> on GitHub, open data.js and choose <b>History</b> to see the last change, or upload the previous copy again.</p>
   <p class="small muted">Details: ${String(err).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))}</p>`;
+// A term can belong to several lessons: its main lesson "u" plus any in "also".
+export const lessonsOf = t => [t.u, ...(Array.isArray(t.also) ? t.also : [])];
+// Answer choices for a quiz question: the right term plus 3 others, never two choices with the same word or definition.
+export function quizOptions(x) {
+  const norm = v => String(v || "").trim().toLowerCase();
+  const near = TERMS.filter(o => o.id !== x.id && lessonsOf(o).some(u => lessonsOf(x).includes(u)));
+  const far = TERMS.filter(o => o.id !== x.id && !near.includes(o));
+  const picked = [x], words = new Set([norm(x.t)]), defs = new Set([norm(x.d)]);
+  for (const o of [...shuffleArr(near), ...shuffleArr(far)]) {
+    if (picked.length === 4) break;
+    if (words.has(norm(o.t)) || defs.has(norm(o.d))) continue;
+    picked.push(o); words.add(norm(o.t)); defs.add(norm(o.d));
+  }
+  return shuffleArr(picked);
+}
+function shuffleArr(a) { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 export function checkData() {
   const out = [], seen = (list, what) => { const s = new Set(); list.forEach(x => { if (!x || !x.id) out.push(`A ${what} is missing its "id".`); else if (s.has(x.id)) out.push(`The ${what} id "${x.id}" is used more than once.`); else s.add(x.id); }); return s; };
   const sets = seen(SETS, "set"), units = seen(UNITS, "lesson"); seen(TERMS, "term"); seen(NOTES, "fill-in sentence");
@@ -31,7 +47,12 @@ export function checkData() {
     if (t.id && !/^[a-z0-9_]+$/.test(t.id)) out.push(`Term id "${t.id}" should use only lowercase letters, numbers and underscores.`);
     if (!t.t || !t.d) out.push(`Term "${t.id}" needs both "t" (the word) and "d" (the definition).`);
     if (!units.has(t.u)) out.push(`Term "${t.id}" has lesson "${t.u}", which isn't in UNITS.`);
+    if (t.also !== undefined && !Array.isArray(t.also)) out.push(`Term "${t.id}" has "also" written wrong. Use square brackets, e.g. "also": ["me_meiosis"].`);
+    (Array.isArray(t.also) ? t.also : []).forEach(u => { if (!units.has(u)) out.push(`Term "${t.id}" lists "${u}" in "also", which isn't in UNITS.`); });
   });
+  const byWord = {};
+  TERMS.forEach(t => { if (t && t.t) { const k = t.t.trim().toLowerCase(); (byWord[k] = byWord[k] || []).push(t.id); } });
+  Object.entries(byWord).forEach(([w, ids]) => { if (ids.length > 1) out.push(`The word "${w}" is listed ${ids.length} times (${ids.join(", ")}). List it once and add the other lessons with "also".`); });
   NOTES.forEach(n => {
     if (!n) return;
     if (!units.has(n.u)) out.push(`Fill-in sentence "${n.id}" has lesson "${n.u}", which isn't in UNITS.`);
@@ -96,7 +117,9 @@ export function createCore(adapter, opts = {}) {
   // Lessons with a future "start" date stay hidden from students (teachers see them, marked).
   const openUnits = () => UNITS.filter(u => opts.preview || isOpen(u));
   const inSel = u => openUnits().some(x => x.id === u) && (setSel === "all" || setOf(u) === setSel) && (lessonSel === "all" || lessonSel === u);
-  const pool = () => TERMS.filter(x => inSel(x.u));
+  const pool = () => TERMS.filter(x => lessonsOf(x).some(inSel));
+  // The lesson to label a term with: the one the student is studying, else its main lesson.
+  const lessonFor = x => lessonsOf(x).find(inSel) || x.u;
   const notePool = () => NOTES.filter(x => inSel(x.u));
   const panel = $("#panel");
   let box = panel;
@@ -225,12 +248,11 @@ export function createCore(adapter, opts = {}) {
       return;
     }
     const it = items[i];
-    const head = `<div class="row spread small"><span class="muted" style="font-variant-numeric:tabular-nums">Review ${i + 1} of ${items.length}${rv.total > items.length ? ` (${rv.total} due)` : ""}</span><span class="row" style="gap:6px"><span class="tag">${esc(unitName(it.kind === "rec" ? it.x.u : it.n.u))}</span><span class="tag ${it.kind === "rec" ? "rectag" : "rcltag"}">${it.kind === "rec" ? "Recognition" : "Recall"}</span></span></div>`;
+    const head = `<div class="row spread small"><span class="muted" style="font-variant-numeric:tabular-nums">Review ${i + 1} of ${items.length}${rv.total > items.length ? ` (${rv.total} due)` : ""}</span><span class="row" style="gap:6px"><span class="tag">${esc(unitName(it.kind === "rec" ? lessonFor(it.x) : it.n.u))}</span><span class="tag ${it.kind === "rec" ? "rectag" : "rcltag"}">${it.kind === "rec" ? "Recognition" : "Recall"}</span></span></div>`;
     const next = () => { rv.i++; drawReview(); };
     if (it.kind === "rec") {
       const x = it.x, dir = Math.random() < .5 ? "def" : "term";
-      const same = TERMS.filter(o => o.id !== x.id && o.u === x.u), other = TERMS.filter(o => o.id !== x.id && o.u !== x.u);
-      const opts = shuffle([x, ...[...shuffle(same), ...shuffle(other)].slice(0, 3)]);
+      const opts = quizOptions(x);
       const prompt = dir === "def" ? `What does <b>${esc(x.t)}</b> mean?` : `Which term matches this definition?<br><span style="font-size:18px">“${esc(x.d)}”</span>`;
       box.innerHTML = `${head}<div class="q">${prompt}</div><div class="opts">${opts.map((o, k) => `<button class="opt" data-k="${k}">${esc(dir === "def" ? o.d : o.t)}</button>`).join("")}</div><div class="feedback" id="fb"></div>`;
       box.querySelectorAll(".opt").forEach(b => b.onclick = () => {
@@ -294,7 +316,7 @@ export function createCore(adapter, opts = {}) {
         </div>
       </div>
       <div class="cardzone"><div class="card" id="card" tabindex="0" role="button" aria-label="Flip card">
-        <div class="face front"><span class="tag">${esc(unitName(x.u))}</span>${frontTerm ? termHTML : `<div class="def">${esc(x.d)}</div>`}<span class="hint">Tap or press Space to flip</span></div>
+        <div class="face front"><span class="tag">${esc(unitName(lessonFor(x)))}</span>${frontTerm ? termHTML : `<div class="def">${esc(x.d)}</div>`}<span class="hint">Tap or press Space to flip</span></div>
         <div class="face back">${frontTerm ? `<div class="def">${esc(x.d)}</div>${exHTML}` : termHTML + exHTML}</div>
       </div></div>
       <div class="row spread">
@@ -323,8 +345,7 @@ export function createCore(adapter, opts = {}) {
     const p = pool(), n = Math.min(10, p.length);
     quiz = {
       qs: shuffle(p).slice(0, n).map(x => {
-        const same = TERMS.filter(o => o.id !== x.id && o.u === x.u), other = TERMS.filter(o => o.id !== x.id && o.u !== x.u);
-        return { x, dir: Math.random() < .5 ? "def" : "term", opts: shuffle([x, ...[...shuffle(same), ...shuffle(other)].slice(0, 3)]) };
+        return { x, dir: Math.random() < .5 ? "def" : "term", opts: quizOptions(x) };
       }), i: 0, right: 0, missed: []
     };
     drawQ();
@@ -340,7 +361,7 @@ export function createCore(adapter, opts = {}) {
     }
     const q = qs[i];
     const prompt = q.dir === "def" ? `What does <b>${esc(q.x.t)}</b> mean?` : `Which term matches this definition?<br><span style="font-size:18px">“${esc(q.x.d)}”</span>`;
-    box.innerHTML = `<div class="row spread small"><span class="muted" style="font-variant-numeric:tabular-nums">Question ${i + 1} of ${qs.length}</span><span class="tag">${esc(unitName(q.x.u))}</span></div>
+    box.innerHTML = `<div class="row spread small"><span class="muted" style="font-variant-numeric:tabular-nums">Question ${i + 1} of ${qs.length}</span><span class="tag">${esc(unitName(lessonFor(q.x)))}</span></div>
       <div class="q">${prompt}</div>
       <div class="opts">${q.opts.map((o, k) => `<button class="opt" data-k="${k}">${esc(q.dir === "def" ? o.d : o.t)}</button>`).join("")}</div>
       <div class="feedback" id="fb"></div>`;
@@ -447,7 +468,7 @@ export function createCore(adapter, opts = {}) {
     const items = pool().filter(x => !qq || x.t.toLowerCase().includes(qq) || x.d.toLowerCase().includes(qq));
     $("#lst").innerHTML = items.length ? items.map(x => {
       const rec = (state.stats[x.id]?.s || 0) >= RECOG_GOAL;
-      return `<div class="entry"><h3>${esc(x.t)}</h3><div class="d"><p>${esc(x.d)}</p>${x.ex ? `<p class="ex">e.g. ${esc(x.ex)}</p>` : ""}<p style="margin-top:4px"><span class="tag halftag">${esc(setName(setOf(x.u)))}</span> <span class="tag">${esc(unitName(x.u))}</span>${rec ? ` <span class="tag rectag">Recognized</span>` : ""}</p></div><button class="star ${state.known.has(x.id) ? "on" : ""}" data-id="${x.id}" aria-pressed="${state.known.has(x.id)}">${state.known.has(x.id) ? "✓ Got it" : "Mark got it"}</button></div>`;
+      return `<div class="entry"><h3>${esc(x.t)}</h3><div class="d"><p>${esc(x.d)}</p>${x.ex ? `<p class="ex">e.g. ${esc(x.ex)}</p>` : ""}<p style="margin-top:4px">${[...new Set(lessonsOf(x).filter(u => opts.preview || UNITS.some(z => z.id === u && isOpen(z))).map(setOf))].map(st => `<span class="tag halftag">${esc(setName(st))}</span>`).join(" ")} <span class="tag">${esc(unitName(lessonFor(x)))}</span>${rec ? ` <span class="tag rectag">Recognized</span>` : ""}</p></div><button class="star ${state.known.has(x.id) ? "on" : ""}" data-id="${x.id}" aria-pressed="${state.known.has(x.id)}">${state.known.has(x.id) ? "✓ Got it" : "Mark got it"}</button></div>`;
     }).join("") : `<p class="muted">No terms match “${esc(q)}”.</p>`;
     $("#lst").querySelectorAll(".star").forEach(b => b.onclick = () => { const t = TERMS.find(x => x.id === b.dataset.id); setKnown(t, !state.known.has(t.id)); drawList(); });
   }

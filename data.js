@@ -61,7 +61,7 @@ export const UNITS = [
   {"id":"food","name":"Food Chains & Webs","set":"lions2"},
 
   // ---------- Elephants ----------
-  {"id":"el_pop","name":"Populations & Limiting Factors","set":"elephants","start":"TBD"},
+  {"id":"el_pop","name":"Populations & Limiting Factors","set":"elephants","start":"2026-11-14"},
   {"id":"el_ns","name":"Natural Selection","set":"elephants","start":"TBD"},
   {"id":"el_dna","name":"DNA Profiling","set":"elephants","start":"TBD"},
   {"id":"el_cons","name":"Human Activity & Conservation","set":"elephants","start":"TBD"},
